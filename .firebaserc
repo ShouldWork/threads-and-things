@@ -1,1 +1,5 @@
-{ "projects": { "default": "threads-and-things-e0943" } }
+{
+  "projects": {
+    "default": "threads-and-things-e0943"
+  }
+}

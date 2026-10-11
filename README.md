@@ -33,7 +33,7 @@ Field names match `src/types.ts`. A person opens the first shop on their `users`
 1. Firebase console (https://console.firebase.google.com), project `threads-and-things-e0943`:
    - Build > Authentication > Sign-in method > Google > Enable.
    - Build > Firestore Database > Create database > production mode > a US region.
-   - Project settings > Your apps > Web > copy the `firebaseConfig` values into `.env` (see `.env.example`). `.firebaserc` already names the project.
+   - Project settings > Your apps > Web > copy the `firebaseConfig` values into `.env` (see `.env.example`) for local `npm run dev`. The same values are committed in `.env.production` so that `npm run build` works on GitHub Actions; Firebase documents these as identifiers, not secrets (https://firebase.google.com/docs/projects/api-keys). `.firebaserc` already names the project.
 
 2. Let Sierra and yourself in. In Firestore, Start collection `users`:
    - Document ID = her Google email, all lowercase. Fields: `role` (string) `owner`, `shops` (array) `sierra`.
@@ -52,6 +52,8 @@ Field names match `src/types.ts`. A person opens the first shop on their `users`
    npm run deploy                               # builds and publishes to Firebase Hosting
    ```
    The deploy prints the URL (`https://threads-and-things-e0943.web.app`). On her phone: open it in Safari or Chrome, Share, Add to Home Screen.
+
+   GitHub Actions also deploys: every push to `main` builds and publishes to the live site, and every pull request gets a preview URL (`.github/workflows/`, created by `firebase init hosting:github`). The service account key lives in the repo's GitHub secrets.
 
 4. Bring her data over
    - More > Import the tracker spreadsheet, choose `Sierra_Depop_Tracker.xlsx`. The tracker's Sales, Active Listings, Expenses and Mileage tabs load. Buyer shipping is read from the Sales tab.
