@@ -47,9 +47,12 @@ export function prepareRow(c: ColName, input: object, legacy = false): Row {
   }
   if (c === 'listings') {
     const value = source.orig ?? null;
-    if (value !== null && (typeof value !== 'number' || !Number.isFinite(value) || value < 0)) throw new Error('Original price must be nonnegative.');
+    // Same limits as firestore.rules, so nothing accepted here is rejected by the server after it queues.
+    if (value !== null && (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1e9)) throw new Error('Original price must be between 0 and 1,000,000,000.');
     row.orig = value;
-    if (row.link && !/^https:\/\/(www\.)?depop\.com\/products\//i.test(row.link as string)) throw new Error('Use an https Depop product link.');
+    // The rule's link pattern is case-sensitive: lowercase the scheme and host, keep the path as typed.
+    if (row.link) row.link = (row.link as string).trim().replace(/^https:\/\/(www\.)?depop\.com/i, m => m.toLowerCase());
+    if (row.link && !/^https:\/\/(www\.)?depop\.com\/products\/.*$/.test(row.link as string)) throw new Error('Use an https Depop product link.');
   }
   const requiredDate = c === 'inventory' ? 'acquired' : c === 'listings' ? 'posted' : 'date';
   if (!legacy && !row[requiredDate]) throw new Error(`${c}: enter ${requiredDate}.`);

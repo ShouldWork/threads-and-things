@@ -4,12 +4,13 @@ import { money, pct, today } from "../lib/calc";
 import { monthly, runRate, forecast, goalPlan, monthLabel, BASIS_LABEL, type Basis } from "../lib/projections";
 import { Kpi, Chips, Bars, Tip, Field } from "../components/ui";
 import { saveSettings } from "../hooks/useData";
+import { useToday } from "../lib/useToday";
 
 export default function Plan({ data, toast }: { data: Data; toast: (s: string) => void }) {
   const [saveError,setSaveError] = useState("");
   const [saving,setSaving] = useState(false);
   const [basis, setBasis] = useState<Basis>("30");
-  const asOf = today();  const rr = useMemo(() => runRate(data, basis, asOf), [data, basis, asOf]);
+  const asOf = useToday();  const rr = useMemo(() => runRate(data, basis, asOf), [data, basis, asOf]);
   const f = useMemo(() => forecast(data, rr, asOf), [data, rr, asOf]);
   const months = useMemo(() => monthly(data, asOf), [data, asOf]);
   const [goal, setGoal] = useState(String(data.settings.goalMonthly || ""));
@@ -63,7 +64,7 @@ export default function Plan({ data, toast }: { data: Data; toast: (s: string) =
           <tr><td>Profit per sale (basis)</td><td>{money(g.avgProfit)}</td></tr>
           {g.reachable && <><tr><td>Listings to have up, at {pct(g.sellThrough)} sell-through</td><td>{g.listingsNeeded ?? "–"}</td></tr>
           <tr><td>Cash into inventory for those listings</td><td>{g.cashNeeded == null ? "–" : money(g.cashNeeded)}</td></tr></>}
-          <tr><td>Hours per month, at {g.profitPerHour == null ? "no time logged" : money(g.profitPerHour) + "/hour"}</td><td>{g.hoursNeeded ?? "–"}</td></tr>
+          <tr><td>Hours per month, at {g.profitPerHour == null ? "no time logged" : money(g.profitPerHour) + "/hour earned before expenses and mileage"}</td><td>{g.hoursNeeded ?? "–"}</td></tr>
         </tbody></table>
         {g.reachable && g.cashNeeded === 0 && rr.avgCogs === 0 && <p className="note" style={{ margin: "8px 0 0" }}>Cash shows $0 because sales in this window have no item cost logged. Enter the item cost on each sale. When you log a sale with the item's SKU from inventory, its cost is copied in automatically.</p>}
       </>}

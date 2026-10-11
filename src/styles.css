@@ -77,6 +77,7 @@ h3{font:800 .72rem var(--body);letter-spacing:.1em;text-transform:uppercase;colo
 .chip .ico{width:14px;height:14px}
 .btn{font:800 .88rem var(--body);border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:999px;padding:10px 18px;cursor:pointer;min-height:42px}
 .btn.primary{background:var(--rose);color:var(--on-rose);border-color:var(--rose);box-shadow:0 4px 12px rgba(214,91,134,.28)}
+.btn svg{width:18px;height:18px;flex:none;vertical-align:-3px}
 .btn:active,.chip:active,.quick button:active,.fab:active{transform:scale(.96)}
 .tabs{position:fixed;left:0;right:0;bottom:0;z-index:6;background:color-mix(in srgb,var(--surface) 92%,transparent);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border-top:1px solid var(--line);border-radius:22px 22px 0 0;display:grid;grid-auto-flow:column;grid-auto-columns:1fr;padding:4px 4px env(safe-area-inset-bottom,0px);box-shadow:0 -6px 20px rgba(214,91,134,.08)}
 .tab{font:800 .68rem var(--body);background:none;border:0;color:var(--muted);padding:6px 0 8px;display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer;min-height:58px}

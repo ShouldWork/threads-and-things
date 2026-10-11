@@ -8,7 +8,12 @@ export function iso(v: unknown): string {
   if (v instanceof Date) return Number.isFinite(v.getTime()) ? new Date(v.getTime()-v.getTimezoneOffset()*60000).toISOString().slice(0,10) : '';
   if (typeof v === 'number') {const d=XLSX.SSF.parse_date_code(v);return d ? `${d.y}-${String(d.m).padStart(2,'0')}-${String(d.d).padStart(2,'0')}` : '';}
   const value=String(v).trim();if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return validDate(value)?value:'';
-  const t=Date.parse(value);return Number.isFinite(t)?new Date(t).toISOString().slice(0,10):'';
+  // US month/day/year (Depop exports, e.g. "10/01/2026") is read directly; other formats use the parsed date's local
+  // calendar parts. Converting local midnight to UTC (toISOString) shifted dates a day back in zones east of UTC.
+  const us=/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(value);
+  if (us) { const out=`${us[3]}-${us[1].padStart(2,'0')}-${us[2].padStart(2,'0')}`; return validDate(out)?out:''; }
+  const t=new Date(value);if(!Number.isFinite(t.getTime()))return '';
+  return `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,'0')}-${String(t.getDate()).padStart(2,'0')}`;
 }
 // Depop's sales export writes "-" for an empty amount (unboosted sales, extra items in a bundle) and "N/A"
 // for refund columns with no refund. Both mean nothing was charged, same as a blank cell.

@@ -183,6 +183,16 @@ service cloud.firestore {
         || !existsAfter(salePath(shop, version, oldSaleId))
         || getAfter(salePath(shop, version, oldSaleId)).data.sku != resource.data.sku;
     }
+    // Listing links (soldBy = sale id), like inventory: a link must point to a sale that exists after the write, and
+    // a listing linked to a sale that still exists cannot be taken over by another sale (two devices, stale data).
+    function linkedListing(shop, version, c, r) {
+      let saleId = r.get('soldBy', '');
+      return c != 'listings' || saleId == '' || existsAfter(salePath(shop, version, saleId));
+    }
+    function releasedListing(shop, version, c, newSaleId) {
+      let oldSaleId = resource.data.get('soldBy', '');
+      return c != 'listings' || oldSaleId == '' || oldSaleId == newSaleId || !existsAfter(salePath(shop, version, oldSaleId));
+    }
     function validUpdate(c, r) {
       // Linking a sale must also work for existing inventory without an acquisition date.
       return validRow(c, r, c == 'inventory' && r.acquired == '' && resource.data.get('acquired', '') == '');
@@ -232,18 +242,23 @@ service cloud.firestore {
       // isRecord(c) comes first so history/{id} and unknown collections are rejected before the expensive checks.
       match /{c}/{id} {
         allow read: if isRecord(c) && member(shop);
-        allow create: if isRecord(c) && writer(shop) && mutation(shop, '') && validRow(c, request.resource.data, false) && linkedInventory(shop, '', c, request.resource.data);
-        allow update: if isRecord(c) && writer(shop) && mutation(shop, '') && validUpdate(c, request.resource.data)
-          && linkedInventory(shop, '', c, request.resource.data) && releasedInventory(shop, '', c, request.resource.data.get('soldBy', ''));
-        allow delete: if isRecord(c) && writer(shop) && mutation(shop, '') && releasedInventory(shop, '', c, '');
+        allow create: if isRecord(c) && writer(shop) && (mutation(shop, '') ? (validRow(c, request.resource.data, false) && linkedInventory(shop, '', c, request.resource.data) && linkedListing(shop, '', c, request.resource.data)) : false);
+        allow update: if isRecord(c) && writer(shop) && (mutation(shop, '') ? (validUpdate(c, request.resource.data)
+          && linkedInventory(shop, '', c, request.resource.data) && releasedInventory(shop, '', c, request.resource.data.get('soldBy', ''))
+          && linkedListing(shop, '', c, request.resource.data) && releasedListing(shop, '', c, request.resource.data.get('soldBy', ''))) : false);
+        allow delete: if isRecord(c) && writer(shop) && mutation(shop, '') && releasedInventory(shop, '', c, '') && releasedListing(shop, '', c, '');
       }
       match /datasets/{version}/{c}/{id} {
         allow read: if isRecord(c) && member(shop);
-        allow create: if isRecord(c) && writer(shop) && ((mutation(shop, version) && validRow(c, request.resource.data, false) && linkedInventory(shop, version, c, request.resource.data))
-          || (staging(shop, version) && validRow(c, request.resource.data, true)));
-        allow update: if isRecord(c) && writer(shop) && mutation(shop, version) && validUpdate(c, request.resource.data)
-          && linkedInventory(shop, version, c, request.resource.data) && releasedInventory(shop, version, c, request.resource.data.get('soldBy', ''));
-        allow delete: if isRecord(c) && writer(shop) && mutation(shop, version) && releasedInventory(shop, version, c, '');
+        // if/else instead of (A && validate) || (B && validate): field validation is the expensive part (about 1,500
+        // evaluations for a denied write in testing, over the 1,000 limit), so only the branch that applies validates.
+        allow create: if isRecord(c) && writer(shop) && (mutation(shop, version)
+          ? (validRow(c, request.resource.data, false) && linkedInventory(shop, version, c, request.resource.data) && linkedListing(shop, version, c, request.resource.data))
+          : (staging(shop, version) ? validRow(c, request.resource.data, true) : false));
+        allow update: if isRecord(c) && writer(shop) && (mutation(shop, version) ? (validUpdate(c, request.resource.data)
+          && linkedInventory(shop, version, c, request.resource.data) && releasedInventory(shop, version, c, request.resource.data.get('soldBy', ''))
+          && linkedListing(shop, version, c, request.resource.data) && releasedListing(shop, version, c, request.resource.data.get('soldBy', ''))) : false);
+        allow delete: if isRecord(c) && writer(shop) && mutation(shop, version) && releasedInventory(shop, version, c, '') && releasedListing(shop, version, c, '');
       }
     }
   }

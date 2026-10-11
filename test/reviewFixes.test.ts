@@ -5,8 +5,13 @@ import { shopSummary, scrub } from '../src/lib/aiSummary';
 import { dashboard, monthToDate } from '../src/lib/dashboard';
 import { monthly, runRate, forecast } from '../src/lib/projections';
 import { mergeRecords } from '../src/lib/importRecords';
-import { sameData } from '../src/lib/importPlan';
-import { weekOf } from '../src/lib/calc';
+import { sameData, finalizedImport } from '../src/lib/importPlan';
+import { weekOf, daysToSell } from '../src/lib/calc';
+import { addDays as addDaysP } from '../src/lib/projections';
+import { iso } from '../src/lib/parse';
+import { soldListing } from '../src/lib/listingLinks';
+import { saleFromListing } from '../src/components/Forms';
+const addDays = addDaysP;
 import { invGroup, LISTS } from '../src/types';
 import { prepareRow } from '../src/lib/records';
 import { sale, listing, item, emptyData } from './fixtures';
@@ -69,6 +74,32 @@ describe('inventory status groups (F10, C07)', () => {
   it('puts every status in exactly one group', () => {
     const groups = Object.fromEntries(LISTS.itemStatus.map(s => [s, invGroup(s)]));
     expect(groups).toEqual({ Unlisted: 'onHand', Listed: 'onHand', Sold: 'sold', Bundled: 'gone', Donated: 'gone', Kept: 'gone', 'Returned to me': 'onHand', 'Lost/damaged': 'gone' });
+  });
+});
+
+describe('2026-10-11 review fixes', () => {
+  it('F06: a listings re-import cannot put a sold, linked listing back on the rack', () => {
+    const link = 'https://www.depop.com/products/x-1/';
+    const base = mergeRecords('listings', [], [listing({ link, status: 'Active' })]).rows[0];
+    const d = emptyData(); d.sales = [sale({ id: 's1' })]; d.listings = [soldListing(base as never, 's1') as never];
+    const after = finalizedImport(d, { merge: { listings: [listing({ link, status: 'Active' })] } }).next.listings[0];
+    expect(after).toMatchObject({ status: 'Sold', soldBy: 's1' });
+  });
+  it('F08: an estimated listing date is not copied into Date listed', () => {
+    expect(saleFromListing({ desc: 'a', posted: '2026-09-01', exact: false }).listed).toBe('');
+    expect(saleFromListing({ desc: 'a', posted: '2026-09-01', exact: true }).listed).toBe('2026-09-01');
+  });
+  it('F09: impossible days-to-sell (listed after sold) is ignored, not counted as fast', () => {
+    expect(daysToSell('2026-10-05', '2026-10-01')).toBeNaN(); expect(daysToSell('', '2026-10-01')).toBeNaN(); expect(daysToSell('2026-10-01', '2026-10-05')).toBe(4);
+  });
+  it('F14: links are normalized to what the database accepts; huge original prices are rejected like the server', () => {
+    expect(prepareRow('listings', { ...listing(), link: 'HTTPS://WWW.Depop.com/products/Abc-1/' }).link).toBe('https://www.depop.com/products/Abc-1/');
+    expect(() => prepareRow('listings', { ...listing(), link: 'https://evil.example/products/x' })).toThrow('Depop');
+    expect(() => prepareRow('listings', { ...listing(), orig: 2e9 })).toThrow('Original price');
+  });
+  it('F12: date-only helpers and US text dates give the same calendar date in any time zone', () => {
+    expect(weekOf('2026-10-10')).toBe('2026-10-05'); expect(addDays('2026-10-10', 0)).toBe('2026-10-10'); expect(addDays('2026-12-31', 1)).toBe('2027-01-01');
+    expect(iso('10/01/2026')).toBe('2026-10-01'); expect(iso('2/30/2026')).toBe('');
   });
 });
 

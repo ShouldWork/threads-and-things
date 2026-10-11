@@ -13,23 +13,27 @@ test('Ask AI answers from the summary and shows an honest error',async({page})=>
   await expect(page.locator('.answer .err')).toHaveText(/on its end/);
 });
 
+// The demo AI holds a "slow demo" answer until the test releases it, so these do not depend on machine speed.
+const askSlow=async(page:Page)=>{await page.getByLabel('Your question').fill('slow demo');await page.getByRole('button',{name:'Ask',exact:true}).click();await page.waitForFunction(()=>typeof (window as unknown as {__releaseAsk?:unknown}).__releaseAsk==='function');};
+const releaseAnswer=(page:Page)=>page.evaluate(()=>(window as unknown as {__releaseAsk:()=>void}).__releaseAsk());
+
 test('an AI question keeps going when she switches tabs, and the answer is waiting on Home',async({page})=>{
-  await page.goto('http://127.0.0.1:5173');
-  await page.getByLabel('Your question').fill('slow demo');await page.getByRole('button',{name:'Ask',exact:true}).click();
+  await page.goto('http://127.0.0.1:5173');await askSlow(page);
   await expect(page.locator('.thinking')).toBeVisible();
   await go(page,'Sales');await expect(page.getByRole('heading',{name:'Sales',exact:true})).toBeVisible();
-  await expect(page.locator('.toast')).toHaveText('Your AI answer is ready on Home.',{timeout:15000});
+  await releaseAnswer(page);
+  await expect(page.locator('.toast')).toHaveText('Your AI answer is ready on Home.');
   await go(page,'Home');
   await expect(page.locator('.answer .asked')).toHaveText('slow demo');
   await expect(page.locator('.answer-body')).toContainText('Demo answer');
 });
 
 test('switching back to Home mid-question still shows it is working',async({page})=>{
-  await page.goto('http://127.0.0.1:5173');
-  await page.getByLabel('Your question').fill('slow demo');await page.getByRole('button',{name:'Ask',exact:true}).click();
+  await page.goto('http://127.0.0.1:5173');await askSlow(page);
   await go(page,'Closet');await go(page,'Home');
   await expect(page.locator('.thinking')).toBeVisible();
-  await expect(page.locator('.answer-body')).toContainText('Demo answer',{timeout:15000});
+  await releaseAnswer(page);
+  await expect(page.locator('.answer-body')).toContainText('Demo answer');
 });
 
 test('Home shortcuts open the right form directly, without the picker',async({page})=>{
@@ -82,6 +86,66 @@ test('marking a listing sold logs the sale, shows it under Sold and in Sales wit
   await saleRow.click();await page.getByRole('button',{name:'Delete',exact:true}).click();await page.getByRole('button',{name:'Yes, delete'}).click();
   await go(page,'Closet');
   expect(await page.getByRole('button',{name:/^On Depop \(/}).innerText()).toBe(before);
+});
+
+test('Log sale keeps an unsaved bin, saves the sale and links it to the listing',async({page})=>{
+  await page.goto('http://127.0.0.1:5173');await go(page,'Closet');
+  const first=page.locator('.card .row').first();const desc=(await first.locator('.desc').innerText()).trim();
+  await first.locator('.rowbtn').click();
+  const dlg=page.getByRole('dialog');
+  const btn=dlg.getByRole('button',{name:'Log sale',exact:true}),save=dlg.getByRole('button',{name:'Save changes'});
+  const [b,s]=[await btn.boundingBox(),await save.boundingBox()];
+  expect(b && s && Math.abs(b.height-s.height)).toBeLessThanOrEqual(2); // same size as Save changes
+  expect(b && s && Math.abs(b.y-s.y)).toBeLessThanOrEqual(4);           // same row
+  await dlg.getByLabel("Where it's stored").fill('Bin 9');                // typed, NOT saved
+  await btn.click();
+  await expect(page.getByRole('dialog',{name:'Add sale'})).toBeVisible();
+  await expect(dlg.getByLabel('Description')).toHaveValue(new RegExp('^'+desc.slice(0,15).replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  await expect(dlg.locator('.linknote')).toContainText('Bin 9');          // the draft was saved before the hand-off
+  await dlg.getByRole('button',{name:'Add',exact:true}).click();await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.getByRole('button',{name:/^Sold \(/}).click();
+  const sold=page.locator('.card .row',{hasText:desc.slice(0,20)}).first();
+  await expect(sold.locator('.pill.spot')).toHaveText('Bin 9');await expect(sold.locator('.pill.good')).toContainText('Sold');
+  await go(page,'Sales');
+  await expect(page.locator('.rowbtn',{hasText:desc.slice(0,20)}).first().locator('.pill.spot')).toHaveText('Bin 9');
+});
+
+test('Sales can be narrowed to Today, This month or All sales, and future-dated sales stay out',async({page})=>{
+  await page.goto('http://127.0.0.1:5173');
+  const [today,tomorrow,lastMonth]=await page.evaluate(()=>{const f=(d:Date)=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;const n=new Date();return [f(n),f(new Date(n.getFullYear(),n.getMonth(),n.getDate()+1)),f(new Date(n.getFullYear(),n.getMonth()-1,1))];});
+  for(const [desc,price,date] of [['Sold today tee','12',today],['Future dated tee','99',tomorrow],['Last month tee','7',lastMonth]]){
+    await page.locator('.quick').getByRole('button',{name:'Log a sale'}).click();
+    const dlg=page.getByRole('dialog');
+    await dlg.getByLabel('Date sold').fill(date);await dlg.getByLabel('Description').fill(desc);await dlg.getByLabel('Item price').fill(price);
+    await dlg.getByRole('button',{name:'Add',exact:true}).click();await expect(page.getByRole('dialog')).toHaveCount(0);
+  }
+  await go(page,'Sales');
+  const period=page.getByRole('group',{name:'Sales period'}),rows=page.locator('.card .rowbtn');
+  const gross=page.locator('.kpi',{hasText:'Gross'}).locator('.v');
+  await period.getByRole('button',{name:'Today'}).click();
+  await expect(period.getByRole('button',{name:'Today'})).toHaveAttribute('aria-pressed','true');
+  await expect(rows).toHaveCount(1);await expect(rows.first()).toContainText('Sold today tee');await expect(gross).toHaveText('$12');
+  await period.getByRole('button',{name:'This month'}).click();
+  await expect(rows.filter({hasText:'Sold today tee'})).toHaveCount(1);
+  await expect(rows.filter({hasText:'Last month tee'})).toHaveCount(0);await expect(rows.filter({hasText:'Future dated tee'})).toHaveCount(0);
+  await period.getByRole('button',{name:'All sales'}).click();
+  await page.getByLabel('Search sales').fill('tee');
+  await expect(rows.filter({hasText:'Last month tee'})).toHaveCount(1);await expect(rows.filter({hasText:'Sold today tee'})).toHaveCount(1);
+  await expect(rows.filter({hasText:'Future dated tee'})).toHaveCount(0);  // same rule as Home and the AI
+});
+
+test('cancelling the sale form after marking a listing Sold still leaves a Log sale button on it',async({page})=>{
+  await page.goto('http://127.0.0.1:5173');await go(page,'Closet');
+  const first=page.locator('.card .row').first();const desc=(await first.locator('.desc').innerText()).trim();
+  await first.locator('.rowbtn').click();
+  await page.getByRole('dialog').getByLabel('Status').selectOption('Sold');
+  await page.getByRole('dialog').getByRole('button',{name:'Save changes'}).click();
+  await expect(page.getByRole('dialog',{name:'Add sale'})).toBeVisible();
+  await page.getByRole('dialog').getByRole('button',{name:'Cancel'}).click();await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.getByRole('button',{name:/^Sold \(/}).click();
+  await page.locator('.card .row',{hasText:desc.slice(0,20)}).first().locator('.rowbtn').click();
+  await page.getByRole('dialog').getByRole('button',{name:'Log sale',exact:true}).click();
+  await expect(page.getByRole('dialog',{name:'Add sale'})).toBeVisible();
 });
 
 test('a listing set to Removed can be found and put back on the rack',async({page})=>{

@@ -1,23 +1,25 @@
 import { useMemo, useState } from "react";
 import type { Data } from "../types";
-import { money, pct, days, isKids, isPlus, median, weekOf, today } from "../lib/calc";
+import { money, pct, days, daysToSell, isKids, isPlus, median, weekOf, today } from "../lib/calc";
 import { notFuture } from "../lib/dashboard";
+import { useToday } from "../lib/useToday";
+import { isActiveListing } from "../lib/listingLinks";
 import { Chips, HBars, Tip } from "../components/ui";
 import { PLAYBOOK } from "../lib/playbook";
 
 export default function Learn({ data }: { data: Data }) {
   const [view, setView] = useState<"insights" | "playbook">("insights");
-  const asOf = today();
-  const S = useMemo(() => data.sales.filter(s => notFuture(s.date, asOf)), [data.sales, asOf]); const active = useMemo(() => data.listings.filter(l => /^active$/i.test(l.status)), [data.listings]);
+  const asOf = useToday();
+  const S = useMemo(() => data.sales.filter(s => notFuture(s.date, asOf)), [data.sales, asOf]); const active = useMemo(() => data.listings.filter(l => isActiveListing(l)), [data.listings]);
   const thru = (s: number, a: number) => (s + a ? s / (s + a) : 0);
   const kS = S.filter(s => isKids(s.size)).length, kA = active.filter(l => isKids(l.size)).length, pS = S.filter(s => isPlus(s.size)).length, pA = active.filter(l => isPlus(l.size)).length, aS = S.length - kS, aA = active.length - kA;
   // Boost comparison needs dated sales on both sides; with fewer than MIN_BOOST each, say so instead of guessing.
   const MIN_BOOST = 3;
-  const b = S.filter(s => s.boost > 0), sellDays = (l: typeof S) => l.filter(s => s.listed && s.date).map(s => days(s.listed, s.date));
+  const b = S.filter(s => s.boost > 0), sellDays = (l: typeof S) => l.map(s => daysToSell(s.listed, s.date)).filter(Number.isFinite);
   const bList = sellDays(b), nList = sellDays(S.filter(s => s.boost === 0));
   const bDays = median(bList), nDays = median(nList), boostSpend = b.reduce((a, s) => a + s.boost, 0), boostComparable = bList.length >= MIN_BOOST && nList.length >= MIN_BOOST;
-  const medPrice = median(S.map(s => s.price)), fast = S.filter(s => s.listed && days(s.listed, s.date) <= 3).length, disc = active.filter(l => l.orig && l.orig > l.price), overall = thru(S.length, active.length);
-  const catRows = useMemo(() => { const m: Record<string, { s: number; a: number }> = {}; S.forEach(s => { m[s.cat] = m[s.cat] || { s: 0, a: 0 }; m[s.cat].s++; }); active.forEach(l => { m[l.cat] = m[l.cat] || { s: 0, a: 0 }; m[l.cat].a++; }); return Object.entries(m).filter(([, v]) => v.s + v.a >= 4).map(([k, v]) => ({ label: k, value: thru(v.s, v.a), sub: `${v.s}/${v.s + v.a}`, tone: thru(v.s, v.a) < .2 ? "var(--bad)" : thru(v.s, v.a) >= .4 ? "var(--good)" : undefined })).sort((a, b) => b.value - a.value); }, [S, active]);
+  const medPrice = median(S.map(s => s.price)), fast = S.filter(s => daysToSell(s.listed, s.date) <= 3).length, disc = active.filter(l => l.orig && l.orig > l.price), overall = thru(S.length, active.length);
+  const catRows = useMemo(() => { const m: Record<string, { s: number; a: number }> = Object.create(null); S.forEach(s => { m[s.cat] = m[s.cat] || { s: 0, a: 0 }; m[s.cat].s++; }); active.forEach(l => { m[l.cat] = m[l.cat] || { s: 0, a: 0 }; m[l.cat].a++; }); return Object.entries(m).filter(([, v]) => v.s + v.a >= 4).map(([k, v]) => ({ label: k, value: thru(v.s, v.a), sub: `${v.s}/${v.s + v.a}`, tone: thru(v.s, v.a) < .2 ? "var(--bad)" : thru(v.s, v.a) >= .4 ? "var(--good)" : undefined })).sort((a, b) => b.value - a.value); }, [S, active]);
   const WORDS = ["flare", "jeans", "low rise", "graphic", "denim", "vintage", "lace", "skirt", "floral", "cropped", "sweater", "costume", "shorts", "dress", "leggings", "y2k"];
   const words = useMemo(() => WORDS.map(w => { const re = new RegExp("\\b" + w, "i"); const s = S.filter(x => re.test(x.desc)).length, a = active.filter(x => re.test(x.desc)).length; return { w, s, a, r: thru(s, a) }; }).filter(x => x.s + x.a >= 6).sort((x, y) => y.r - x.r), [S, active]);
   // Listed = sales by listed date plus active listings with an exact posted date (same definition as Plan).

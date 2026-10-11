@@ -1,6 +1,6 @@
 # Review fixes
 
-These changes are local to `codex/review-fixes`. They have not been committed, pushed, or deployed. No production records were changed during this work.
+Historical record. This review-fix work was later committed in a82979a (Threads and Things 1.2) and deployed to production on 2026-10-11. The original note said it was local to `codex/review-fixes` and not yet committed; that is no longer true. Later fixes are tracked in git history and in the local `.codex-reviews/` comparison files.
 
 ## Findings, changes, and reasons
 

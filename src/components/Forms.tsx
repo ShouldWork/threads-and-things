@@ -16,8 +16,9 @@ export const locations = (data: Data) => Array.from(new Set([...data.listings, .
 
 // After saving, a form can hand off to another form (marking a listing Sold opens "Log this sale").
 export type NextSheet = { kind: Kind; initial?: Record<string, unknown>; listingId?: string };
-// A new sale prefilled from the listing it came from.
-export const saleFromListing = (l: Partial<Listing>) => ({ date: today(), desc: l.desc || "", cat: l.cat || "Tops", size: l.size || "", price: l.price || 0, listed: l.posted || "", platform: "Depop" });
+// A new sale prefilled from the listing it came from. An estimated posting date (exact: false) is a guess, so it is
+// not copied into "Date listed", where it would quietly drive days-to-sell figures.
+export const saleFromListing = (l: Partial<Listing>) => ({ date: today(), desc: l.desc || "", cat: l.cat || "Tops", size: l.size || "", price: l.price || 0, listed: l.exact === false ? "" : l.posted || "", platform: "Depop" });
 
 type Props ={ kind: Kind; data: Data; initial?: Partial<Sale & Item & Expense & Trip & TimeRow & Issue & Listing> & { id?: string }; listingId?: string; onDone: (msg: string, next?: NextSheet) => void; onCancel: () => void };
 
@@ -53,7 +54,8 @@ export default function Form({ kind, data, initial, listingId, onDone, onCancel 
   const linkedSale = kind === "listing" && initial?.soldBy ? data.sales.find(x => x.id === initial.soldBy) : undefined;
   const fromListing = kind === "sale" ? (listingId ? data.listings.find(l => l.id === listingId) : data.listings.find(l => l.soldBy && l.soldBy === initial?.id)) : undefined;
 
-  async function persist(deleting = false) {
+  // logSale: save this listing (keeping any edits such as a new bin), then open the linked sale form.
+  async function persist(deleting = false, logSale = false) {
     if (saving.current) return;
     saving.current = true; setBusy(true); setErr('');
     try {
@@ -70,6 +72,7 @@ export default function Form({ kind, data, initial, listingId, onDone, onCancel 
       }
       let result;
       if (kind === 'sale') {
+        if (!deleting && row.listed && row.date && String(row.listed) > String(row.date)) throw new Error("Date listed can't be after the date sold.");
         if (skuMatch && !row.cogs && !costTouched && !editing) row.cogs = skuMatch.cost;
         if (initial) row.importKey = saleKey(initial as Sale);
         if (!deleting) row = markManual('sales',row,initial,protectEdits);
@@ -81,9 +84,9 @@ export default function Form({ kind, data, initial, listingId, onDone, onCancel 
         result = editing ? await update(COL[kind],recordId.current,clean) : await add(COL[kind],clean,recordId.current);
       }
       const msg = result.queued ? (deleting ? 'Deletion queued; will sync.' : 'Saved on this device; will sync.') : deleting ? 'Deleted.' : 'Saved.';
-      // Just marked an unlinked listing Sold: offer to log the sale, prefilled and linked to this listing.
+      // Just marked an unlinked listing Sold, or tapped Log sale: open the sale form, prefilled and linked to this listing.
       const justSold = kind === 'listing' && !deleting && !linkedSale && /^sold$/i.test(String(row.status)) && !/^sold$/i.test(String(initial?.status || ''));
-      if (justSold) onDone('Marked sold. Log the sale so it counts in your totals.', { kind: 'sale', initial: saleFromListing(row as Partial<Listing>), listingId: recordId.current });
+      if (kind === 'listing' && !deleting && !linkedSale && (justSold || logSale)) onDone(justSold ? 'Marked sold. Log the sale so it counts in your totals.' : '', { kind: 'sale', initial: saleFromListing(row as Partial<Listing>), listingId: recordId.current });
       else onDone(msg);
     } catch (e) { setErr(e instanceof Error ? e.message : 'Could not save.'); }
     finally { saving.current=false; setBusy(false); }
@@ -154,7 +157,6 @@ export default function Form({ kind, data, initial, listingId, onDone, onCancel 
       <Field label="Where it's stored"><input type="text" list="tt-locations" autoComplete="off" value={str("location")} onChange={e => s("location", e.target.value)} placeholder="Bin 1, closet shelf, garage tote..." /></Field>
       <datalist id="tt-locations">{locations(data).map(l => <option key={l} value={l} />)}</datalist>
       {linkedSale && <p className="note linknote">Sold {fmtDate(linkedSale.date)} for {money(linkedSale.price)}. To put it back on the rack, delete that sale in Sales.</p>}
-      {editing && !linkedSale && /^active$/i.test(str("status")) && <button type="button" className="btn small" onClick={() => onDone("", { kind: "sale", initial: saleFromListing({ ...(initial as Partial<Listing>), ...(f as Partial<Listing>) }), listingId: recordId.current })}>{I.tag} Sold it? Log this sale</button>}
       <div className="grid2"><Field label="Category"><Select value={str("cat")} onChange={v => s("cat", v)} options={LISTS.categories} /></Field><Field label="Size"><Select value={str("size")} onChange={v => s("size", v)} options={LISTS.sizes} /></Field></div>
       <div className="grid2"><Field label="Current price">{num("price")}</Field><Field label="Original price (if marked down)"><input type="number" min={0} step="0.01" value={f.orig == null ? "" : String(f.orig)} onChange={e => s("orig", e.target.value === "" ? null : parseFloat(e.target.value))} /></Field></div>
       <div className="grid2"><Field label="Posted date">{date("posted")}</Field><Field label="Status"><Select value={str("status")} onChange={v => s("status", v)} options={["Active", "Sold", "Removed", "Relisted"]} /></Field></div>
@@ -166,6 +168,9 @@ export default function Form({ kind, data, initial, listingId, onDone, onCancel 
     <div className="actions">
       <button type="submit" className="btn primary" disabled={busy}>{busy ? "Saving…" : editing ? "Save changes" : "Add"}</button>
       <button type="button" className="btn" onClick={onCancel}>Cancel</button>
+      {/* Shortcut for an item that sold: opens the sale form prefilled and linked to this listing. */}
+      {/* Also on a Sold listing with no sale yet (e.g. she cancelled the sale form after marking it sold). */}
+      {kind === "listing" && editing && !linkedSale && /^(active|sold)$/i.test(str("status").trim()) && <button type="button" className="btn" disabled={busy} onClick={() => persist(false, true)}>Log sale</button>}
       {editing && (!confirmDel ? <button type="button" className="btn danger" disabled={busy} onClick={() => setConfirmDel(true)}>Delete</button> : <><span className="note">Really delete?</span><button type="button" className="btn danger" disabled={busy} onClick={() => persist(true)}>Yes, delete</button></>)}
     </div>
   </form>;

@@ -32,7 +32,9 @@ export function matchListing(listings: LinkedListing[], sale: Sale, taken: Set<s
 // sale to its listing when exactly one sale and one listing share that description.
 export function reconcileListings(data: Data): { data: Data; marked: number } {
   const saleIds = new Set(data.sales.map(s => s.id).filter(Boolean));
-  let listings = (data.listings as LinkedListing[]).map(l => l.soldBy && !saleIds.has(l.soldBy) ? releasedListing(l) : l);
+  // A link to a sale that no longer exists is released. A link to a sale that exists always means Sold, even if a
+  // listings-page import just set the status back to Active (the page can still show an item that sold).
+  let listings = (data.listings as LinkedListing[]).map(l => !l.soldBy ? l : !saleIds.has(l.soldBy) ? releasedListing(l) : isSoldListing(l) ? l : { ...l, status: 'Sold' });
   const linked = new Set(listings.map(l => l.soldBy).filter(Boolean));
   const unlinked = data.sales.filter(s => s.id && !linked.has(s.id));
   const salesPerDesc = new Map<string, number>();

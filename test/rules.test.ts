@@ -37,7 +37,8 @@ describe('Firestore authorization and validation',()=>{
     await assertSucceeds(write(item(),'inventory'));await assertSucceeds(write(listing(),'listings'));
     await assertSucceeds(write({...item(),location:'Bin 3'},'inventory'));await assertFails(write({...item(),location:3},'inventory'));
     await assertSucceeds(write({...listing(),location:'Bin 1'},'listings'));await assertFails(write({...listing(),location:1},'listings'));
-    await assertSucceeds(write({...listing(),status:'Sold',soldBy:'s1',previousStatus:'Active'},'listings'));await assertFails(write({...listing(),soldBy:5},'listings'));
+    await assertFails(write({...listing(),soldBy:5},'listings'));
+    await assertFails(write({...listing(),status:'Sold',soldBy:'no-such-sale',previousStatus:'Active'},'listings'));
     await assertFails(write({...listing(),link:'javascript:alert(1)'},'listings'));await assertFails(write({date:'2026-10-01',purpose:'trip',miles:-2},'mileage'));await assertFails(write(sale(),'unknown'));
   });
   it('requires a revision increment for normal writes and denies deleting the shop',async()=>{
@@ -106,6 +107,21 @@ describe('Firestore authorization and validation',()=>{
     const db=env.authenticatedContext('editor',{email:'editor@example.com',email_verified:true}).firestore();
     await assertFails(setDoc(doc(db,'shops','alice'),{dataVersion:'empty-version',revision:1},{merge:true}));
     expect((await getDoc(doc(db,'shops','alice'))).data()?.dataVersion).toBeUndefined();
+  });
+  it('links a listing to a sale in one batch, blocks a second sale taking it over, and allows release with the sale',async()=>{
+    const db=owner(),first=writeBatch(db);
+    first.set(doc(db,'shops','alice','sales','s1'),sale());
+    first.set(doc(db,'shops','alice','listings','L'),{...listing(),status:'Sold',soldBy:'s1',previousStatus:'Active'});
+    first.set(doc(db,'shops','alice'),{revision:increment(1)},{merge:true});await assertSucceeds(first.commit());
+    const competing=writeBatch(db);
+    competing.set(doc(db,'shops','alice','sales','s2'),sale({desc:'Another device'}));
+    competing.set(doc(db,'shops','alice','listings','L'),{...listing(),status:'Sold',soldBy:'s2',previousStatus:'Active'});
+    competing.set(doc(db,'shops','alice'),{revision:increment(1)},{merge:true});await assertFails(competing.commit());
+    expect((await getDoc(doc(db,'shops','alice','listings','L'))).data()?.soldBy).toBe('s1');
+    const release=writeBatch(db);
+    release.delete(doc(db,'shops','alice','sales','s1'));
+    release.set(doc(db,'shops','alice','listings','L'),{...listing(),status:'Active',soldBy:'',previousStatus:''});
+    release.set(doc(db,'shops','alice'),{revision:increment(1)},{merge:true});await assertSucceeds(release.commit());
   });
   it('prevents staging new records into a published recovery snapshot',async()=>{
     const db=owner();await assertSucceeds(setDoc(doc(db,'shops','alice','datasets','v1','sales','saved'),sale()));

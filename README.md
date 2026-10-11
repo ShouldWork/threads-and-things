@@ -27,7 +27,7 @@ npm run check                    # unit/component/hook tests, TypeScript, produc
 npm audit --audit-level=moderate
 npm install --global firebase-tools@15.33.0
 firebase emulators:exec --only firestore --project demo-threads-and-things "npm run test:rules"
-npx playwright install chromium
+npx playwright install chromium webkit   # the suite runs Chromium plus iPhone-emulated WebKit
 npm run test:browser              # run after the production build
 npm run build:preview             # demo preview build; overwrites dist
 ```

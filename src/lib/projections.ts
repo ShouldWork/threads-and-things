@@ -3,21 +3,23 @@
 import type { Data, Sale } from "../types";
 import { DAY, net } from "./calc";
 import { datedBy, notFuture } from "./dashboard";
+import { isActiveListing } from "./listingLinks";
 
 const d2 = (n: number) => Math.round(n * 100) / 100;
 const DAYS_PER_MONTH = 30.4; // 365 / 12
 export const monthKey = (d: string) => d.slice(0, 7);
-export const addDays = (iso: string, n: number) => new Date(Date.parse(iso + "T12:00") + n * DAY).toISOString().slice(0, 10);
+// UTC midnight in, UTC date out: the same calendar date in every time zone.
+export const addDays = (iso: string, n: number) => new Date(Date.parse(iso + "T00:00:00Z") + n * DAY).toISOString().slice(0, 10);
 export const monthLabel = (k: string) => new Date(k + "-15T12:00").toLocaleString("en-US", { month: "short", year: "2-digit" });
 const nextMonth = (k: string) => { const [y, m] = k.split("-").map(Number); return m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`; };
 const fees = (s: Sale) => (s.depopFee || 0) + (s.payFee || 0) + (s.boost || 0);
-const activeOf = (data: Data) => data.listings.filter(l => /^active$/i.test(l.status));
+const activeOf = (data: Data) => data.listings.filter(l => isActiveListing(l));
 
 // ---------- Month by month ----------
 export type MonthRow = { month: string; sold: number; listed: number; gross: number; fees: number; payout: number; cogs: number; costs: number; profit: number; avg: number; margin: number };
 
 export function monthly(data: Data, asOf: string): MonthRow[] {
-  const rows: Record<string, MonthRow> = {};
+  const rows: Record<string, MonthRow> = Object.create(null);
   const row = (k: string) => rows[k] || (rows[k] = { month: k, sold: 0, listed: 0, gross: 0, fees: 0, payout: 0, cogs: 0, costs: 0, profit: 0, avg: 0, margin: 0 });
   const start = monthKey(data.settings.shopStart || ""), end = monthKey(asOf);
   if (/^\d{4}-\d{2}$/.test(start) && /^\d{4}-\d{2}$/.test(end)) for (let k = start; k <= end; k = nextMonth(k)) row(k); // empty months still show
@@ -86,6 +88,8 @@ export function goalPlan(data: Data, rr: RunRate, target: number, asOf: string):
   const listingsNeeded = salesNeeded != null && sellThrough > 0 ? Math.ceil(salesNeeded / sellThrough) : null;
   const cashNeeded = listingsNeeded == null ? null : d2(listingsNeeded * rr.avgCogs);
   const hours = data.time.filter(t => notFuture(t.date, asOf)).reduce((a, t) => a + t.minutes, 0) / 60;
+  // Sales after fees and item cost, per hour, BEFORE expenses and mileage (overhead is added to the target below).
+  // Home's "Profit per hour" subtracts overhead first, so the two figures intentionally differ.
   const profitPerHour = hours > 0 ? d2(done.reduce((a, s) => a + net(s) - (s.cogs || 0), 0) / hours) : null;
   const hoursNeeded = profitPerHour && profitPerHour > 0 ? d2((target + overheadMonthly) / profitPerHour) : null;
   return { target, currentMonthly, gap: d2(target - currentMonthly), onTrack: currentMonthly >= target, overheadMonthly, avgProfit: d2(rr.avgProfit), reachable, salesNeeded, perWeek, sellThrough, listingsNeeded, cashNeeded, profitPerHour, hoursNeeded };

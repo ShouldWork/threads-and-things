@@ -1,6 +1,7 @@
 import { invGroup, type Data } from '../types';
-import { net, days, isKids, median } from './calc';
+import { net, days, daysToSell, isKids, median } from './calc';
 import { dashboard, monthToDate, notFuture, datedBy } from './dashboard';
+import { isActiveListing } from './listingLinks';
 
 // What the AI is allowed to see. Buyer fields (buyer name, buyer state, order and transaction IDs, links) are never
 // included. Text she wrote herself (listing titles and descriptions, category, size, storage labels) is included,
@@ -16,14 +17,14 @@ const dict = <T>() => Object.create(null) as Record<string, T>;
 
 export function shopSummary(data: Data, asOf: string) {
   const pack = (d: ReturnType<typeof dashboard>) => ({ itemsSold: d.sales.length, grossSales: r2(d.gross), payoutAfterFees: r2(d.payout), itemCost: r2(d.cogs), expenses: r2(d.exp), mileageDeduction: r2(d.miles), netProfit: r2(d.profit), hoursLogged: r2(d.hours), feesPaid: r2(d.fees) });
-  const active = data.listings.filter(l => /^active$/i.test(l.status)).map(l => ({ ...l, age: l.posted ? days(l.posted, asOf) : null }));
+  const active = data.listings.filter(l => isActiveListing(l)).map(l => ({ ...l, age: l.posted ? days(l.posted, asOf) : null }));
   const byAge = [...active].sort((a, b) => (b.age ?? -1) - (a.age ?? -1));
   const happened = data.sales.filter(s => notFuture(s.date, asOf)); // same rule as the dashboard totals
   const dated = data.sales.filter(s => datedBy(s.date, asOf));
 
   const cats = dict<{ sold: number; listed: number; prices: number[]; daysToSell: number[] }>();
   const cat = (k: string) => (cats[scrub(k) || 'Other'] ||= { sold: 0, listed: 0, prices: [], daysToSell: [] });
-  for (const s of happened) { const c = cat(s.cat); c.sold++; c.prices.push(s.price); if (s.listed && s.date) c.daysToSell.push(days(s.listed, s.date)); }
+  for (const s of happened) { const c = cat(s.cat); c.sold++; c.prices.push(s.price); const d = daysToSell(s.listed, s.date); if (Number.isFinite(d)) c.daysToSell.push(d); }
   for (const l of active) cat(l.cat).listed++;
   const byCategory = Object.entries(cats).map(([category, c]) => ({
     category, sold: c.sold, stillListed: c.listed,

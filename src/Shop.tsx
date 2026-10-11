@@ -13,6 +13,7 @@ const More = lazy(() => import('./pages/More'));
 import Form, { KIND_LABEL, type Kind, type NextSheet } from "./components/Forms";
 import { I, Sheet, useToast } from "./components/ui";
 import ErrorBoundary from "./components/ErrorBoundary";
+import { isActiveListing } from "./lib/listingLinks";
 
 const TABS: [string, string, JSX.Element][] = [["home", "Home", I.home], ["sales", "Sales", I.tag], ["closet", "Closet", I.hanger], ["plan", "Plan", I.chart], ["learn", "Learn", I.spark], ["more", "More", I.more]];
 export default function Shop({user}: {user: User}) {
@@ -39,7 +40,7 @@ export default function Shop({user}: {user: User}) {
   if (error) return <div className="wrap"><div className="login"><img src="/icon.png" alt="Threads and Things" /><h1>Could not open your shop</h1><p className="sub">{error}<br />Signed in as {user.email}. Ask Blake to add this email to the users list, then reload.</p><button type="button" className="btn" onClick={() => logout().catch(e => toast(e.message))}>Sign out</button></div></div>;
   if (!ready) return <div className="wrap"><p className="note" style={{ paddingTop: 20 }}>Loading your shop…</p></div>;
 
-  const active = data.listings.filter(l => /^active$/i.test(l.status)).length;
+  const active = data.listings.filter(l => isActiveListing(l)).length;
   const openEdit = (kind: Kind, row: object) => setSheet({ kind, initial: row as Row });
 
   return <>

@@ -6,12 +6,14 @@ import { Kpi, Chips, Bars, HBars, I } from "../components/ui";
 import { dashboard, datedBy, type Range } from '../lib/dashboard';
 import { invGroup } from "../types";
 import Ask from "../components/Ask";
+import { useToday } from "../lib/useToday";
+import { isActiveListing } from "../lib/listingLinks";
 import type { Kind } from "../components/Forms";
 // openForm opens a specific add form directly (no "What happened?" picker in between).
 export default function Home({ data, go, openForm }: { data: Data; go: (t: string) => void; openForm: (kind: Kind) => void }) {
   const [range, setRange] = useState<Range>("all");
-  const active = useMemo(() => data.listings.filter(l => /^active$/i.test(l.status)), [data.listings]);
-  const asOf = today();
+  const active = useMemo(() => data.listings.filter(l => isActiveListing(l)), [data.listings]);
+  const asOf = useToday();
   const { sales,gross,payout,cogs,exp,miles,profit,hours,fees } = useMemo(() => dashboard(data,range,asOf),[data,range,asOf]);
   const snapshot = asOf;
   const stale = active.filter(l => days(l.posted, snapshot) >= 21);
@@ -24,7 +26,7 @@ export default function Home({ data, go, openForm }: { data: Data; go: (t: strin
   // Tax set-aside is on all-time profit to date, using the same rule as the totals (future-dated records excluded).
   const profitAll = useMemo(() => dashboard(data, "all", asOf).profit, [data, asOf]);
   const tax = sales.reduce((a, s) => a + (s.tax || 0), 0);
-  const byPlat = useMemo(() => { const m: Record<string, number> = {}; sales.forEach(s => { const k = s.platform || "Depop"; m[k] = (m[k] || 0) + s.price; }); return Object.entries(m).sort((a, b) => b[1] - a[1]).map(([label, value]) => ({ label, value })); }, [sales]);
+  const byPlat = useMemo(() => { const m: Record<string, number> = Object.create(null); sales.forEach(s => { const k = s.platform || "Depop"; m[k] = (m[k] || 0) + s.price; }); return Object.entries(m).sort((a, b) => b[1] - a[1]).map(([label, value]) => ({ label, value })); }, [sales]);
 
   const todo: { ic: JSX.Element; tone?: string; t: string; d: string; go: string }[] = [];
   if (stale.length) todo.push({ ic: I.refresh, tone: "bad", t: `${stale.length} listings have sat 21+ days`, d: "Open each one, tap Edit, save. That bumps it in search without losing likes.", go: "closet" });
