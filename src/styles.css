@@ -66,8 +66,9 @@ h3{font:800 .72rem var(--body);letter-spacing:.1em;text-transform:uppercase;colo
 .kpi.hero .tip{color:#fff;border-color:rgba(255,255,255,.6)}
 .tip{position:absolute;z-index:2;top:10px;right:10px;width:20px;height:20px;border-radius:50%;border:1.5px solid var(--muted);color:var(--muted);background:none;font:800 .72rem var(--body);display:grid;place-items:center;cursor:pointer;padding:0;line-height:1}
 .tip:focus-visible,.btn:focus-visible,.chip:focus-visible,.tab:focus-visible,input:focus-visible,select:focus-visible,.acc:focus-visible{outline:2px solid var(--rose);outline-offset:2px}
-.pop{position:absolute;right:8px;top:34px;z-index:4;width:min(260px,80vw);background:var(--ink);color:var(--bg);border-radius:12px;padding:10px 12px;font-size:.8rem;line-height:1.4;box-shadow:var(--shadow);font-weight:600}
-.pop:after{content:"";position:absolute;top:-6px;right:12px;border:6px solid transparent;border-top:0;border-bottom-color:var(--ink)}
+.pop{position:fixed;z-index:20;width:min(260px,calc(100vw - 16px));background:var(--ink);color:var(--bg);border-radius:12px;padding:10px 12px;font-size:.8rem;line-height:1.4;box-shadow:var(--shadow);font-weight:600}
+.pop:after{content:"";position:absolute;top:-6px;left:calc(var(--arrow,50%) - 6px);border:6px solid transparent;border-top:0;border-bottom-color:var(--ink)}
+.pop.up:after{top:auto;bottom:-6px;border-bottom:0;border-top:6px solid var(--ink)}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:24px;padding:14px 16px;margin-top:12px;min-width:0;box-shadow:var(--shadow);position:relative}
 .card .tip{top:12px;right:12px}
 .card h3{padding-right:28px}
@@ -195,4 +196,17 @@ a{color:var(--rose);font-weight:700}
 .linknote svg{width:14px;height:14px;flex:none;align-self:center}
 .retire{display:flex;gap:10px;align-items:flex-start;margin:10px 0;padding:10px 12px;border:1px solid var(--line);border-radius:14px;background:var(--surface-2)}
 .retire input{margin-top:4px;width:18px;height:18px;flex:none}
+/* Filter row: compact buttons that open a pop-up of choices. */
+/* One row, equal widths: label on top, current choice below (truncated if long), chevron at the right. */
+.pickers{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:6px}
+.picker{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:auto auto;column-gap:4px;align-items:center;text-align:left;min-height:50px;padding:6px 8px 6px 12px;border-radius:16px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:700 .85rem var(--body);cursor:pointer;box-shadow:var(--shadow-sm);min-width:0}
+.picker.on{border-color:var(--rose);background:var(--rose-soft)}
+.picker-label{grid-column:1;font-size:.64rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);line-height:1.2}
+.picker-value{grid-column:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.3}
+.picker-chev{grid-column:2;grid-row:1 / span 2;width:16px;height:16px;color:var(--muted)}
+.picker:focus-visible,.pickopt:focus-visible{outline:2px solid var(--rose);outline-offset:2px}
+.picklist{display:grid;gap:6px;margin-top:12px}
+.pickopt{display:flex;justify-content:space-between;align-items:center;gap:10px;width:100%;min-height:48px;padding:10px 16px;border-radius:16px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:700 1rem var(--body);text-align:left;cursor:pointer}
+.pickopt[aria-pressed="true"]{border-color:var(--rose);background:var(--rose-soft);color:var(--rose-ink)}
+.pickopt svg{width:20px;height:20px;flex:none}
 .offline{background:var(--warn-soft);color:var(--warn);font-weight:700;font-size:.8rem;padding:6px 12px;border-radius:999px;display:inline-block}

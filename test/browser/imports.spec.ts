@@ -21,14 +21,14 @@ test('ambiguous legacy matches require a choice which is remembered on repeat im
 });
 test('inventory imports preserve app notes and costs, and reset can be undone or restored from backup',async({page},testInfo)=>{
   await emptyShop(page);await tracker(page,'Imported note');
-  await page.getByRole('navigation',{name:'Sections'}).getByRole('button',{name:'Closet',exact:true}).click();await page.getByRole('button',{name:/Inventory \(1\)/}).click();await page.getByRole('button',{name:/Blue shirt.*TT-1/}).click();
+  await page.getByRole('navigation',{name:'Sections'}).getByRole('button',{name:'Closet',exact:true}).click();await page.getByRole('button',{name:/^Status:/}).click();await page.getByRole('dialog').getByRole('button',{name:/Inventory \(1\)/}).click();await page.getByRole('button',{name:/Blue shirt.*TT-1/}).click();
   await page.getByLabel('Notes',{exact:true}).fill('My permanent note');await page.getByLabel('Cost paid',{exact:true}).fill('9');await page.getByRole('button',{name:'Save changes'}).click();await expect(page.getByRole('dialog')).toHaveCount(0);
   await page.getByRole('navigation',{name:'Sections'}).getByRole('button',{name:'More',exact:true}).click();await tracker(page,'Older spreadsheet note');
   const downloadPromise=page.waitForEvent('download');await page.getByRole('button',{name:'Download full backup'}).click();const download=await downloadPromise;const backup=testInfo.outputPath('backup.json');await download.saveAs(backup);
   await page.getByRole('button',{name:'Reset shop data'}).click();await confirm(page,'RESET SHOP');await expect(page.getByRole('row',{name:'inventory 0',exact:true})).toBeVisible();
   await page.locator('button:enabled').filter({hasText:'Undo this operation'}).click();await confirm(page,'UNDO');await expect(page.getByRole('row',{name:'inventory 1',exact:true})).toBeVisible();
   await page.locator('input[type=file][accept=".json,application/json"]').setInputFiles(backup);await confirm(page,'RESTORE');
-  await page.getByRole('navigation',{name:'Sections'}).getByRole('button',{name:'Closet',exact:true}).click();await page.getByRole('button',{name:/Inventory \(1\)/}).click();await page.getByRole('button',{name:/Blue shirt.*TT-1/}).click();await expect(page.getByLabel('Notes',{exact:true})).toHaveValue('My permanent note');await expect(page.getByLabel('Cost paid',{exact:true})).toHaveValue('9');
+  await page.getByRole('navigation',{name:'Sections'}).getByRole('button',{name:'Closet',exact:true}).click();await page.getByRole('button',{name:/^Status:/}).click();await page.getByRole('dialog').getByRole('button',{name:/Inventory \(1\)/}).click();await page.getByRole('button',{name:/Blue shirt.*TT-1/}).click();await expect(page.getByLabel('Notes',{exact:true})).toHaveValue('My permanent note');await expect(page.getByLabel('Cost paid',{exact:true})).toHaveValue('9');
 });
 test('clear imported sales preserves manual sales and later edits disable undo',async({page})=>{
   await emptyShop(page);await csv(page,'Date of sale,Item price,Description,Sale ID\n2026-10-01,20,Imported shirt,tx-1\n');await apply(page);

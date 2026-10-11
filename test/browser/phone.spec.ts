@@ -2,6 +2,18 @@
 // Ask AI uses the demo stand-in (test/ai.mock.ts): no network, no AI allowance.
 import {test,expect,type Page} from '@playwright/test';
 const go=async(page:Page,tab:string)=>page.getByRole('navigation',{name:'Sections'}).getByRole('button',{name:tab,exact:true}).click();
+const esc=(s:string)=>s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+// Closet filters are buttons that open a pop-up of choices: pick(page,'Status','Sold') opens Status and taps Sold.
+const pick=async(page:Page,filter:string,option:string)=>{
+  await page.getByRole('button',{name:new RegExp('^'+esc(filter)+':')}).click();
+  await page.getByRole('dialog').getByRole('button',{name:new RegExp('^'+esc(option))}).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+};
+const onDepopCount=async(page:Page)=>{
+  await page.getByRole('button',{name:/^Status:/}).click();
+  const t=await page.getByRole('dialog').getByRole('button',{name:/^On Depop/}).innerText();
+  await page.keyboard.press('Escape');await expect(page.getByRole('dialog')).toHaveCount(0);return t;
+};
 
 test('Ask AI answers from the summary and shows an honest error',async({page})=>{
   await page.goto('http://127.0.0.1:5173');
@@ -52,17 +64,17 @@ test('a Depop listing can be given a storage spot, then found by chip or search'
   await first.locator('.rowbtn').click();
   await page.getByRole('dialog').getByLabel("Where it's stored").fill('Bin 1');
   await page.getByRole('dialog').getByRole('button',{name:'Save changes'}).click();await expect(page.getByRole('dialog')).toHaveCount(0);
-  await page.getByRole('group',{name:"Where it's stored"}).getByRole('button',{name:'Bin 1'}).click();
+  await pick(page,"Where it's stored",'Bin 1');
   await expect(page.locator('.card .row')).toHaveCount(1);
   await expect(page.locator('.card .row')).toContainText(desc.slice(0,20));
   await expect(page.locator('.card .row .pill.spot')).toHaveText('Bin 1');
-  await page.getByRole('group',{name:"Where it's stored"}).getByRole('button',{name:'Anywhere'}).click();
+  await pick(page,"Where it's stored",'Anywhere');
   await page.getByLabel('Search').fill('bin 1');await expect(page.locator('.card .row')).toHaveCount(1);
 });
 
 test('marking a listing sold logs the sale, shows it under Sold and in Sales with its bin, and deleting the sale restores it',async({page})=>{
   await page.goto('http://127.0.0.1:5173');await go(page,'Closet');
-  const before=await page.getByRole('button',{name:/^On Depop \(/}).innerText();
+  const before=await onDepopCount(page);
   const first=page.locator('.card .row').first();const desc=(await first.locator('.desc').innerText()).trim();
   await first.locator('.rowbtn').click();
   const dlg=page.getByRole('dialog');
@@ -75,8 +87,8 @@ test('marking a listing sold logs the sale, shows it under Sold and in Sales wit
   await expect(page.getByRole('dialog').locator('.linknote')).toContainText('Bin 7');
   await page.getByRole('dialog').getByRole('button',{name:'Add',exact:true}).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
-  expect(await page.getByRole('button',{name:/^On Depop \(/}).innerText()).not.toBe(before);
-  await page.getByRole('button',{name:/^Sold \(/}).click();
+  expect(await onDepopCount(page)).not.toBe(before);
+  await pick(page,'Status','Sold');
   await expect(page.locator('.card .row').first()).toContainText(desc.slice(0,20));
   await expect(page.locator('.card .row').first().locator('.pill.spot')).toHaveText('Bin 7');
   await expect(page.locator('.card .row').first().locator('.pill.good')).toContainText('Sold');
@@ -85,7 +97,7 @@ test('marking a listing sold logs the sale, shows it under Sold and in Sales wit
   await expect(saleRow.locator('.pill.spot')).toHaveText('Bin 7');
   await saleRow.click();await page.getByRole('button',{name:'Delete',exact:true}).click();await page.getByRole('button',{name:'Yes, delete'}).click();
   await go(page,'Closet');
-  expect(await page.getByRole('button',{name:/^On Depop \(/}).innerText()).toBe(before);
+  expect(await onDepopCount(page)).toBe(before);
 });
 
 test('Log sale keeps an unsaved bin, saves the sale and links it to the listing',async({page})=>{
@@ -103,7 +115,7 @@ test('Log sale keeps an unsaved bin, saves the sale and links it to the listing'
   await expect(dlg.getByLabel('Description')).toHaveValue(new RegExp('^'+desc.slice(0,15).replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
   await expect(dlg.locator('.linknote')).toContainText('Bin 9');          // the draft was saved before the hand-off
   await dlg.getByRole('button',{name:'Add',exact:true}).click();await expect(page.getByRole('dialog')).toHaveCount(0);
-  await page.getByRole('button',{name:/^Sold \(/}).click();
+  await pick(page,'Status','Sold');
   const sold=page.locator('.card .row',{hasText:desc.slice(0,20)}).first();
   await expect(sold.locator('.pill.spot')).toHaveText('Bin 9');await expect(sold.locator('.pill.good')).toContainText('Sold');
   await go(page,'Sales');
@@ -142,7 +154,7 @@ test('cancelling the sale form after marking a listing Sold still leaves a Log s
   await page.getByRole('dialog').getByRole('button',{name:'Save changes'}).click();
   await expect(page.getByRole('dialog',{name:'Add sale'})).toBeVisible();
   await page.getByRole('dialog').getByRole('button',{name:'Cancel'}).click();await expect(page.getByRole('dialog')).toHaveCount(0);
-  await page.getByRole('button',{name:/^Sold \(/}).click();
+  await pick(page,'Status','Sold');
   await page.locator('.card .row',{hasText:desc.slice(0,20)}).first().locator('.rowbtn').click();
   await page.getByRole('dialog').getByRole('button',{name:'Log sale',exact:true}).click();
   await expect(page.getByRole('dialog',{name:'Add sale'})).toBeVisible();
@@ -154,12 +166,29 @@ test('a listing set to Removed can be found and put back on the rack',async({pag
   await first.locator('.rowbtn').click();
   await page.getByRole('dialog').getByLabel('Status').selectOption('Removed');
   await page.getByRole('dialog').getByRole('button',{name:'Save changes'}).click();await expect(page.getByRole('dialog')).toHaveCount(0);
-  await page.getByRole('button',{name:/^Removed \(/}).click();
+  await pick(page,'Status','Removed');
   await page.locator('.card .row',{hasText:desc.slice(0,20)}).first().locator('.rowbtn').click();
   await page.getByRole('dialog').getByLabel('Status').selectOption('Active');
   await page.getByRole('dialog').getByRole('button',{name:'Save changes'}).click();await expect(page.getByRole('dialog')).toHaveCount(0);
-  await page.getByRole('button',{name:/^On Depop \(/}).click();
+  await pick(page,'Status','On Depop');
   await expect(page.locator('.card .row',{hasText:desc.slice(0,20)})).toHaveCount(1);
+});
+
+test('Closet filters sit in one row and open a pop-up with the choices',async({page})=>{
+  await page.goto('http://127.0.0.1:5173');await go(page,'Closet');
+  const pickers=page.locator('.pickers .picker');
+  await expect(pickers.nth(2)).toBeVisible(); // .all() does not wait for the page to render
+  const boxes=await Promise.all((await pickers.all()).map(p=>p.boundingBox()));
+  expect(boxes.length).toBeGreaterThanOrEqual(3);
+  expect(Math.max(...boxes.map(b=>b!.y))-Math.min(...boxes.map(b=>b!.y))).toBeLessThanOrEqual(2); // one row
+  await expect(page.getByRole('button',{name:'Listing age: Any age'})).toBeVisible();
+  await page.getByRole('button',{name:'Listing age: Any age'}).click();
+  const dlg=page.getByRole('dialog',{name:'Listing age'});
+  await expect(dlg.getByRole('button')).toHaveText([/Close/,/Any age/,/Sitting 21\+ days/,/New this week/]);
+  await dlg.getByRole('button',{name:/^Sitting 21\+ days/}).click();await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.getByRole('button',{name:'Listing age: Sitting 21+ days'})).toBeVisible();
+  const rows=await page.locator('.card .row .pill.bad').count(),all=await page.locator('.card .row').count();
+  expect(rows).toBe(all); // every listing shown is 21+ days old
 });
 
 test('inventory location can be set and filtered',async({page})=>{
@@ -172,9 +201,9 @@ test('inventory location can be set and filtered',async({page})=>{
     await page.getByRole('dialog').getByRole('button',{name:'Add',exact:true}).click();
     await expect(page.getByRole('dialog')).toHaveCount(0);
   }
-  await go(page,'Closet');await page.getByRole('button',{name:/^Inventory/}).click();
+  await go(page,'Closet');await pick(page,'Status','Inventory');
   await expect(page.locator('.card .row')).toHaveCount(2);
-  await page.getByRole('group',{name:"Where it's stored"}).getByRole('button',{name:'Bin 3'}).click();
+  await pick(page,"Where it's stored",'Bin 3');
   await expect(page.locator('.card .row')).toHaveCount(1);
   await expect(page.locator('.card .row')).toContainText('Lace cami');
 });
@@ -198,11 +227,22 @@ test('import buttons are real buttons a keyboard can reach',async({page})=>{
   await button.focus();await expect(button).toBeFocused();
 });
 
-test('the profit help tip opens, is not clipped, and closes with Escape',async({page})=>{
+test('every help tip opens fully on screen, left column included, and closes with Escape',async({page})=>{
   await page.goto('http://127.0.0.1:5173');
-  const hero=page.locator('.kpi.hero');await hero.getByRole('button',{name:'What does this mean?'}).click();
-  const pop=hero.locator('.pop');await expect(pop).toBeVisible();
-  expect(await hero.evaluate(el=>getComputedStyle(el).overflow)).toBe('visible');
-  await page.keyboard.press('Escape');await expect(pop).toHaveCount(0);
+  for(const tab of ['Home','Plan','Learn']){
+    await go(page,tab);
+    const tips=page.getByRole('button',{name:'What does this mean?'});
+    await expect(tips.first()).toBeVisible();const n=await tips.count();expect(n).toBeGreaterThan(0);
+    for(let i=0;i<n;i++){
+      await tips.nth(i).scrollIntoViewIfNeeded();await tips.nth(i).click();
+      const pop=page.getByRole('tooltip');await expect(pop).toBeVisible();
+      const b=(await pop.boundingBox())!;const vw=await page.evaluate(()=>document.documentElement.clientWidth);const vh=await page.evaluate(()=>window.innerHeight);
+      expect(b.x,`${tab} tip ${i} left edge`).toBeGreaterThanOrEqual(0);expect(b.x+b.width,`${tab} tip ${i} right edge`).toBeLessThanOrEqual(vw);
+      expect(b.y,`${tab} tip ${i} top`).toBeGreaterThanOrEqual(0);expect(b.y+b.height,`${tab} tip ${i} bottom`).toBeLessThanOrEqual(vh);
+      // Nothing else covers the bubble (the tab bar, a card, a scroll box).
+      expect(await pop.evaluate(el=>{const r=el.getBoundingClientRect();return [[r.left+4,r.top+4],[r.right-4,r.top+4],[r.left+4,r.bottom-4],[r.right-4,r.bottom-4]].every(([x,y])=>el.contains(document.elementFromPoint(x,y)));}),`${tab} tip ${i} uncovered`).toBe(true);
+      await page.keyboard.press('Escape');await expect(pop).toHaveCount(0);
+    }
+  }
   expect(await page.evaluate(()=>document.documentElement.scrollWidth-window.innerWidth)).toBeLessThanOrEqual(0);
 });

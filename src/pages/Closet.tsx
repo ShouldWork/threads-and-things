@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { invGroup, type Data, type Item, type Listing } from "../types";
 import { money, days, isKids, fmtDate, today } from "../lib/calc";
-import { Chips, I } from "../components/ui";
+import { FilterPicker, I } from "../components/ui";
 import { locations } from "../components/Forms";
 import { isActiveListing, isSoldListing } from "../lib/listingLinks";
 
@@ -46,21 +46,21 @@ export default function Closet({ data, onEditItem, onEditListing }: { data: Data
 
   return <>
     <h1>Closet</h1><p className="sub">{{ listings: "Everything on the rack right now. Red tags need a refresh or a new price.", sold: "Listings that sold, and where each was stored. Tap one to see or fix it.", removed: "Listings taken down or no longer on Depop. Set one back to Active to return it to the rack.", inventory: "Every item you have logged, what it cost, and where it ended up." }[view]}</p>
-    <div style={{ marginTop: 10 }}><Chips value={view} onChange={v => { setView(v); setCat("All"); setLoc(""); setAge("all"); setKids("all"); }} label="View" options={[["listings", `On Depop (${active.length})`], ["sold", `Sold (${sold.length})`], ["removed", `Removed (${removed.length})`], ["inventory", `Inventory (${data.inventory.length})`]]} /></div>
     <div className="controls">
+      {/* One row of filter buttons; each opens a pop-up of choices instead of showing every option on the page. */}
+      <div className="pickers">
+        <FilterPicker short="Status" title="Status" value={view} onChange={v => { setView(v); setCat("All"); setLoc(""); setAge("all"); setKids("all"); }}
+          options={[["listings", `On Depop (${active.length})`], ["sold", `Sold (${sold.length})`], ["removed", `Removed (${removed.length})`], ["inventory", `Inventory (${data.inventory.length})`]]} />
+        {view === "listings" && <FilterPicker short="Age" title="Listing age" value={age} onChange={setAge} options={[["all", "Any age"], ["21", "Sitting 21+ days"], ["new", "New this week"]]} />}
+        {view === "listings" && <FilterPicker short="Size" title="Size" value={kids} onChange={setKids} options={[["all", "All sizes"], ["adult", "Adult"], ["kids", "Kids"]]} />}
+        {spots.length > 0 && <FilterPicker short="Spot" title="Where it's stored" value={loc} onChange={setLoc} options={[["", "Anywhere"], ...spots.map(s => [s, s] as [string, string]), ...(hasUnplaced ? [[NO_SPOT, "No spot yet"] as [string, string]] : [])]} />}
+      </div>
       <input id="c-q" type="search" placeholder={isListingView ? "Search, e.g. flare, size M, bin 1" : "Search description, SKU, brand, spot"} value={q} onChange={e => setQ(e.target.value)} aria-label="Search" />
       <div className="two">
         <select id="c-cat" value={cat} onChange={e => setCat(e.target.value)} aria-label="Category">{cats.map(c => <option key={c}>{c}</option>)}</select>
         {isListingView ? <select id="c-sort" value={sort} onChange={e => setSort(e.target.value)} aria-label="Sort"><option value="old">Oldest first</option><option value="new">Newest first</option><option value="hi">Price high to low</option><option value="lo">Price low to high</option></select>
           : <select id="c-status" value={status} onChange={e => setStatus(e.target.value)} aria-label="Status"><option value="open">On hand</option><option value="unlisted">Not listed yet</option><option value="sold">Sold</option><option value="gone">Left unsold</option><option value="all">All</option></select>}
       </div>
-      {view === "listings" && <div className="chips">
-        {[["all", "Any age"], ["21", "Sitting 21+ days"], ["new", "New this week"]].map(([k, l]) => <button key={k} type="button" className="chip" aria-pressed={age === k} onClick={() => setAge(k)}>{l}</button>)}
-        {[["all", "All sizes"], ["adult", "Adult"], ["kids", "Kids"]].map(([k, l]) => <button key={"k" + k} type="button" className="chip" aria-pressed={kids === k} onClick={() => setKids(k)}>{l}</button>)}
-      </div>}
-      {spots.length > 0 && <div className="chips" role="group" aria-label="Where it's stored">
-        {[["", "Anywhere"], ...spots.map(s => [s, s]), ...(hasUnplaced ? [[NO_SPOT, "No spot yet"]] : [])].map(([k, l]) => <button key={"l" + k} type="button" className="chip" aria-pressed={loc === k} onClick={() => setLoc(k)}>{k && k !== NO_SPOT ? <>{I.pin}{l}</> : l}</button>)}
-      </div>}
     </div>
 
     {isListingView && <>

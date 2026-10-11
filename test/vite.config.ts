@@ -11,6 +11,8 @@ export default defineConfig({ plugins: [react()], root: path.resolve(__dirname, 
   { find: /^\.\.\/firebase$/, replacement: path.resolve(__dirname, "firebase.mock.ts") },
   { find: /^\.\/hooks\/useData$/, replacement: path.resolve(__dirname, "useData.mock.ts") },
   { find: /^\.\.\/hooks\/useData$/, replacement: path.resolve(__dirname, "useData.mock.ts") },
+  // The demo/preview build has no service worker plugin: stub its registration module.
+  { find: /^virtual:pwa-register$/, replacement: path.resolve(__dirname, "pwa.mock.ts") },
   // The demo never calls the real AI unless LIVE_AI=1 is set (it would spend the shop's free allowance).
   ...(process.env.LIVE_AI === "1" ? [] : [{ find: /^\.\.\/ai$/, replacement: path.resolve(__dirname, "ai.mock.ts") }]),
 ] } });

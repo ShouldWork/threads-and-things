@@ -1,17 +1,56 @@
-import { cloneElement, isValidElement, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { cloneElement, isValidElement, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { TIPS } from "../lib/tips";
 
 export function Tip({ k }: { k: keyof typeof TIPS }) {
   const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number; arrow: number; up: boolean } | null>(null);
+  const btn = useRef<HTMLButtonElement>(null); const pop = useRef<HTMLDivElement>(null);
   const id = useId();
   useEffect(() => {
     if (!open) return;
-    const click = (e: MouseEvent) => { if (!(e.target as HTMLElement).closest?.(".tipwrap")) setOpen(false); };
+    const click = (e: MouseEvent) => { const t = e.target as Node; if (!btn.current?.contains(t) && !pop.current?.contains(t)) setOpen(false); };
     const key = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
     document.addEventListener("click", click); document.addEventListener("keydown", key);
     return () => { document.removeEventListener("click", click); document.removeEventListener("keydown", key); };
   }, [open]);
-  return <span className="tipwrap"><button type="button" className="tip" aria-label="What does this mean?" aria-expanded={open} aria-controls={id} aria-describedby={open ? id : undefined} onClick={e => { e.stopPropagation(); setOpen(o => !o); }}>?</button>{open && <div className="pop" role="tooltip" id={id}>{TIPS[k]}</div>}</span>;
+  // The bubble is placed against the screen, not its card, so a card in the left column or inside a
+  // side-scrolling table can't push it off screen or clip it. Centered on the button, kept 8px inside
+  // both edges, and flipped above the button when it would land under the bottom tab bar.
+  useLayoutEffect(() => {
+    if (!open) { setPos(null); return; }
+    const place = () => {
+      const b = btn.current?.getBoundingClientRect(), p = pop.current; if (!b || !p) return;
+      const m = 8, w = p.offsetWidth, h = p.offsetHeight, vw = document.documentElement.clientWidth;
+      const bottom = window.innerHeight - (document.querySelector(".tabs")?.getBoundingClientRect().height ?? 0) - m;
+      const cx = b.left + b.width / 2, left = Math.min(Math.max(m, cx - w / 2), vw - m - w);
+      const up = b.bottom + 8 + h > bottom && b.top - 8 - h >= m;
+      setPos({ top: up ? b.top - 8 - h : b.bottom + 8, left, arrow: Math.min(Math.max(14, cx - left), w - 14), up });
+    };
+    place();
+    window.addEventListener("scroll", place, true); window.addEventListener("resize", place);
+    return () => { window.removeEventListener("scroll", place, true); window.removeEventListener("resize", place); };
+  }, [open]);
+  return <span className="tipwrap"><button ref={btn} type="button" className="tip" aria-label="What does this mean?" aria-expanded={open} aria-controls={id} aria-describedby={open ? id : undefined} onClick={e => { e.stopPropagation(); setOpen(o => !o); }}>?</button>
+    {open && createPortal(<div ref={pop} className={"pop" + (pos?.up ? " up" : "")} role="tooltip" id={id} style={pos ? { top: pos.top, left: pos.left, ["--arrow" as string]: pos.arrow + "px" } : { visibility: "hidden", top: 0, left: 0 }}>{TIPS[k]}</div>, document.body)}</span>;
+}
+
+// A compact filter: one button showing the current choice; tapping it opens a pop-up with the choices.
+// short: the small label on the button ("Spot"); title: the pop-up heading and accessible name ("Where it's stored").
+// An option label may carry a count in parentheses ("Sold (3)"): the pop-up shows it, the button drops it to stay short.
+export function FilterPicker<T extends string>({ short, title, value, options, onChange }: { short: string; title: string; value: T; options: [T, string][]; onChange: (v: T) => void }) {
+  const [open, setOpen] = useState(false);
+  const current = (options.find(o => o[0] === value)?.[1] ?? "").replace(/\s*\(\d+\)$/, "");
+  return <>
+    <button type="button" className={"picker" + (value !== options[0]?.[0] ? " on" : "")} aria-haspopup="dialog" aria-label={`${title}: ${current}`} onClick={() => setOpen(true)}>
+      <span className="picker-label">{short}</span><span className="picker-value">{current}</span><svg className="picker-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
+    </button>
+    {open && <Sheet title={title} onClose={() => setOpen(false)}>
+      <div className="picklist" role="group" aria-label={title}>
+        {options.map(([k, label]) => <button key={k} type="button" className="pickopt" aria-pressed={k === value} onClick={() => { onChange(k); setOpen(false); }}><span>{label}</span>{k === value && <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>}</button>)}
+      </div>
+    </Sheet>}
+  </>;
 }
 
 // A real, focusable button that opens a hidden file input (a <label> around a hidden input can't be reached by keyboard).
