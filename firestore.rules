@@ -1,24 +1,246 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Who can get in: one document per person in "users", document ID = their Google email (lowercase).
-    //   users/sierra@gmail.com  { role: "owner", shops: ["sierra"] }
-    // Which shop they can see: the "shops" array on that document.
-    // Managed in the Firebase console only. Nothing in the app can write to "users".
-    function signedIn() { return request.auth != null && request.auth.token.email != null; }
+    function signedIn() { return request.auth != null && request.auth.token.email != null && request.auth.token.email_verified == true; }
     function me() { return /databases/$(database)/documents/users/$(request.auth.token.email.lower()); }
-    function member(shopId) { return signedIn() && exists(me()) && (shopId in get(me()).data.shops); }
-
-    match /users/{email} {
-      allow read: if signedIn() && request.auth.token.email.lower() == email;
-      allow write: if false;
+    function member(shop) { return signedIn() && exists(me()) && shop in get(me()).data.shops; }
+    function writer(shop) { return member(shop) && get(me()).data.role in ['owner', 'editor']; }
+    function text(value) { return value is string && value.size() <= 20000; }
+    function amount(value) { return value is number && value >= 0 && value <= 1000000000; }
+    function date(value) { return value is string && (value == '' || value.matches('^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$')); }
+    function before(shop) { return get(/databases/$(database)/documents/shops/$(shop)).data; }
+    function after(shop) { return getAfter(/databases/$(database)/documents/shops/$(shop)).data; }
+    // Each looks the shop up once (let) to stay well inside the 1000-expression evaluation budget.
+    function mutation(shop, version) {
+      let b = before(shop);
+      let a = after(shop);
+      return a.get('dataVersion', '') == version
+        && b.get('dataVersion', '') == version
+        && a.get('revision', 0) == b.get('revision', 0) + 1;
     }
-
-    // shops/{shopId} holds the shop's settings. Everything else lives in subcollections under it.
-    match /shops/{shopId} {
-      allow read, write: if member(shopId);
-      match /{document=**} {
-        allow read, write: if member(shopId);
+    function staging(shop, version) {
+      let b = before(shop);
+      let a = after(shop);
+      return version != b.get('dataVersion', '')
+        && a.get('dataVersion', '') == b.get('dataVersion', '')
+        && a.get('revision', 0) == b.get('revision', 0)
+        && !exists(/databases/$(database)/documents/shops/$(shop)/history/$(version));
+    }
+    function valid_sales(r, legacy) {
+      return r.keys().hasAll(['date', 'listed', 'brand', 'cat', 'size', 'desc', 'state', 'sku', 'platform', 'price', 'ship', 'depopFee', 'payFee', 'boost', 'usps', 'refund', 'feeBack', 'cogs', 'tax'])
+        && r.keys().hasOnly(['date', 'listed', 'brand', 'cat', 'size', 'desc', 'state', 'sku', 'platform', 'price', 'ship', 'depopFee', 'payFee', 'boost', 'usps', 'refund', 'feeBack', 'cogs', 'tax', 'buyer', 'sourceId', 'importKey', 'importFingerprint', 'sourceData', 'manualFields', 'origin', 'productId', 'orderId', 'importAliases'])
+        && date(r.date)
+        && date(r.listed)
+        && text(r.brand)
+        && text(r.cat)
+        && text(r.size)
+        && text(r.desc)
+        && text(r.state)
+        && text(r.sku)
+        && text(r.platform)
+        && amount(r.price)
+        && amount(r.ship)
+        && amount(r.depopFee)
+        && amount(r.payFee)
+        && amount(r.boost)
+        && amount(r.usps)
+        && amount(r.refund)
+        && amount(r.feeBack)
+        && amount(r.cogs)
+        && amount(r.tax)
+        && text(r.get('buyer', ''))
+        && text(r.get('sourceId', ''))
+        && text(r.get('importKey', ''))
+        && text(r.get('importFingerprint', ''))
+        && (r.desc.size() > 0 || r.price > 0)
+        && (legacy || r.date != '');
+    }
+    function valid_listings(r, legacy) {
+      return r.keys().hasAll(['cat', 'size', 'desc', 'posted', 'link', 'status', 'price', 'exact', 'boosted'])
+        && r.keys().hasOnly(['cat', 'size', 'desc', 'posted', 'link', 'status', 'price', 'exact', 'boosted', 'orig', 'sourceData', 'manualFields', 'origin', 'productId', 'orderId', 'importAliases'])
+        && text(r.cat)
+        && text(r.size)
+        && text(r.desc)
+        && date(r.posted)
+        && text(r.link)
+        && text(r.status)
+        && amount(r.price)
+        && r.exact is bool
+        && r.boosted is bool
+        && (r.get('orig', null) == null || amount(r.orig))
+        && (r.link == '' || r.link.matches('^https://(www[.])?depop[.]com/products/.*$'))
+        && r.desc.size() > 0
+        && (legacy || r.posted != '');
+    }
+    function valid_inventory(r, legacy) {
+      return r.keys().hasAll(['sku', 'acquired', 'source', 'cat', 'size', 'brand', 'desc', 'platform', 'listed', 'status', 'outcome', 'notes', 'cost'])
+        && r.keys().hasOnly(['sku', 'acquired', 'source', 'cat', 'size', 'brand', 'desc', 'platform', 'listed', 'status', 'outcome', 'notes', 'cost', 'soldBy', 'previousStatus', 'previousOutcome', 'location', 'sourceData', 'manualFields', 'origin', 'productId', 'orderId', 'importAliases'])
+        && text(r.sku)
+        && date(r.acquired)
+        && text(r.source)
+        && text(r.cat)
+        && text(r.size)
+        && text(r.brand)
+        && text(r.desc)
+        && text(r.platform)
+        && date(r.listed)
+        && text(r.status)
+        && date(r.outcome)
+        && text(r.notes)
+        && amount(r.cost)
+        && text(r.get('soldBy', ''))
+        && text(r.get('previousStatus', ''))
+        && text(r.get('previousOutcome', ''))
+        && text(r.get('location', ''))
+        && r.sku.size() > 0
+        && (legacy || r.acquired != '');
+    }
+    function valid_expenses(r, legacy) {
+      return r.keys().hasAll(['date', 'cat', 'vendor', 'desc', 'paidWith', 'notes', 'amount', 'receipt'])
+        && r.keys().hasOnly(['date', 'cat', 'vendor', 'desc', 'paidWith', 'notes', 'amount', 'receipt', 'sourceData', 'manualFields', 'origin', 'productId', 'orderId', 'importAliases'])
+        && date(r.date)
+        && text(r.cat)
+        && text(r.vendor)
+        && text(r.desc)
+        && text(r.paidWith)
+        && text(r.notes)
+        && amount(r.amount)
+        && r.receipt is bool
+        && (legacy || r.date != '')
+        && (legacy || r.amount > 0);
+    }
+    function valid_mileage(r, legacy) {
+      return r.keys().hasAll(['date', 'purpose', 'miles'])
+        && r.keys().hasOnly(['date', 'purpose', 'miles', 'sourceData', 'manualFields', 'origin', 'productId', 'orderId', 'importAliases'])
+        && date(r.date)
+        && text(r.purpose)
+        && amount(r.miles)
+        && (legacy || r.date != '')
+        && (legacy || r.miles > 0);
+    }
+    function valid_time(r, legacy) {
+      return r.keys().hasAll(['date', 'activity', 'notes', 'minutes'])
+        && r.keys().hasOnly(['date', 'activity', 'notes', 'minutes', 'sourceData', 'manualFields', 'origin', 'productId', 'orderId', 'importAliases'])
+        && date(r.date)
+        && text(r.activity)
+        && text(r.notes)
+        && amount(r.minutes)
+        && (legacy || r.date != '')
+        && (legacy || r.minutes > 0);
+    }
+    function valid_issues(r, legacy) {
+      return r.keys().hasAll(['date', 'sku', 'platform', 'type', 'what', 'next', 'lost', 'resolved'])
+        && r.keys().hasOnly(['date', 'sku', 'platform', 'type', 'what', 'next', 'lost', 'resolved', 'sourceData', 'manualFields', 'origin', 'productId', 'orderId', 'importAliases'])
+        && date(r.date)
+        && text(r.sku)
+        && text(r.platform)
+        && text(r.type)
+        && text(r.what)
+        && text(r.next)
+        && amount(r.lost)
+        && r.resolved is bool
+        && (legacy || r.date != '');
+    }
+    function validRow(c, r, legacy) {
+      return validImportMetadata(r) && ((c == 'sales' && valid_sales(r, legacy))
+        || (c == 'listings' && valid_listings(r, legacy))
+        || (c == 'inventory' && valid_inventory(r, legacy))
+        || (c == 'expenses' && valid_expenses(r, legacy))
+        || (c == 'mileage' && valid_mileage(r, legacy))
+        || (c == 'time' && valid_time(r, legacy))
+        || (c == 'issues' && valid_issues(r, legacy)));
+    }
+    function validImportMetadata(r) {
+      return text(r.get('sourceData', '')) && text(r.get('manualFields', ''))
+        && r.get('origin','') in ['', 'import', 'manual'] && text(r.get('productId',''))
+        && text(r.get('orderId','')) && text(r.get('importAliases',''));
+    }
+    function validSettings(r) {
+      return r.keys().hasOnly(['name','mileageRate','taxPct','snapshot','shopStart','goalMonthly','revision','lastWrite','dataVersion'])
+        && text(r.get('name', 'Sierra')) && r.get('name', 'Sierra').size() > 0
+        && amount(r.get('mileageRate', 0.7)) && r.get('mileageRate', 0.7) <= 100
+        && amount(r.get('taxPct', 0.25)) && r.get('taxPct', 0.25) <= 0.6
+        && amount(r.get('goalMonthly', 0)) && date(r.get('snapshot', '')) && date(r.get('shopStart', ''))
+        && r.get('revision', 0) is int && r.get('revision', 0) >= 0
+        && text(r.get('lastWrite', '')) && text(r.get('dataVersion', ''));
+    }
+    function salePath(shop, version, id) {
+      return version == '' ? /databases/$(database)/documents/shops/$(shop)/sales/$(id)
+        : /databases/$(database)/documents/shops/$(shop)/datasets/$(version)/sales/$(id);
+    }
+    function linkedInventory(shop, version, c, r) {
+      let saleId = r.get('soldBy', '');
+      return c != 'inventory' || saleId == '' || (existsAfter(salePath(shop, version, saleId))
+        && getAfter(salePath(shop, version, saleId)).data.sku == r.sku
+        && getAfter(salePath(shop, version, saleId)).data.date == r.outcome && r.status == 'Sold');
+    }
+    function releasedInventory(shop, version, c, newSaleId) {
+      let oldSaleId = resource.data.get('soldBy', '');
+      return c != 'inventory' || oldSaleId == '' || oldSaleId == newSaleId
+        || !existsAfter(salePath(shop, version, oldSaleId))
+        || getAfter(salePath(shop, version, oldSaleId)).data.sku != resource.data.sku;
+    }
+    function validUpdate(c, r) {
+      // Linking a sale must also work for existing inventory without an acquisition date.
+      return validRow(c, r, c == 'inventory' && r.acquired == '' && resource.data.get('acquired', '') == '');
+    }
+    function validHistory(shop, r) {
+      return r.keys().hasAll(['action','label','actor','createdAt','beforeVersion','afterVersion','revisionBefore','revisionAfter','beforeSettings','afterSettings','counts'])
+        && r.keys().hasOnly(['action','label','actor','createdAt','beforeVersion','afterVersion','revisionBefore','revisionAfter','beforeSettings','afterSettings','counts'])
+        && r.action in ['import','clear-sales','reset','deduplicate','undo','restore']
+        && (!(r.action in ['clear-sales','reset','restore']) || get(me()).data.role == 'owner')
+        && text(r.label) && text(r.createdAt) && r.actor == request.auth.token.email.lower()
+        && text(r.beforeVersion) && text(r.afterVersion)
+        && r.beforeVersion == before(shop).get('dataVersion','') && r.afterVersion == after(shop).get('dataVersion','')
+        && r.revisionBefore == before(shop).get('revision',0) && r.revisionAfter == r.revisionBefore + 1 && r.revisionAfter == after(shop).revision
+        && validSettings(r.beforeSettings) && validSettings(r.afterSettings)
+        && r.counts is map && r.counts.keys().hasAll(['added','updated','unchanged','skipped'])
+        && r.counts.keys().hasOnly(['added','updated','unchanged','skipped'])
+        && amount(r.counts.added) && amount(r.counts.updated) && amount(r.counts.unchanged) && amount(r.counts.skipped);
+    }
+    match /users/{email} {
+      allow get: if signedIn() && request.auth.token.email.lower() == email;
+      allow list, write: if false;
+    }
+    function isRecord(c) { return c in ['sales', 'listings', 'inventory', 'expenses', 'mileage', 'time', 'issues']; }
+    // Changing the active dataset must publish its history entry in the same write, and may never reopen a
+    // version that already has history (a retired or recovery snapshot). The history rule enforces owner-only
+    // clear/reset/restore, so without this an editor could switch to an empty, never-staged version.
+    function auditedVersionChange(shop) {
+      let next = request.resource.data.get('dataVersion', '');
+      return next == resource.data.get('dataVersion', '')
+        || (next != ''
+          && !exists(/databases/$(database)/documents/shops/$(shop)/history/$(next))
+          && existsAfter(/databases/$(database)/documents/shops/$(shop)/history/$(next)));
+    }
+    match /shops/{shop} {
+      allow read: if member(shop);
+      allow create: if writer(shop) && validSettings(request.resource.data) && request.resource.data.revision == 1
+        && request.resource.data.get('dataVersion', '') == '';
+      allow update: if writer(shop) && validSettings(request.resource.data)
+        && request.resource.data.revision == resource.data.get('revision', 0) + 1
+        && auditedVersionChange(shop);
+      allow delete: if false;
+      match /history/{id} {
+        allow read: if member(shop);
+        allow create: if writer(shop) && id == request.resource.data.afterVersion && validHistory(shop, request.resource.data);
+        allow update, delete: if false;
+      }
+      // isRecord(c) comes first so history/{id} and unknown collections are rejected before the expensive checks.
+      match /{c}/{id} {
+        allow read: if isRecord(c) && member(shop);
+        allow create: if isRecord(c) && writer(shop) && mutation(shop, '') && validRow(c, request.resource.data, false) && linkedInventory(shop, '', c, request.resource.data);
+        allow update: if isRecord(c) && writer(shop) && mutation(shop, '') && validUpdate(c, request.resource.data)
+          && linkedInventory(shop, '', c, request.resource.data) && releasedInventory(shop, '', c, request.resource.data.get('soldBy', ''));
+        allow delete: if isRecord(c) && writer(shop) && mutation(shop, '') && releasedInventory(shop, '', c, '');
+      }
+      match /datasets/{version}/{c}/{id} {
+        allow read: if isRecord(c) && member(shop);
+        allow create: if isRecord(c) && writer(shop) && ((mutation(shop, version) && validRow(c, request.resource.data, false) && linkedInventory(shop, version, c, request.resource.data))
+          || (staging(shop, version) && validRow(c, request.resource.data, true)));
+        allow update: if isRecord(c) && writer(shop) && mutation(shop, version) && validUpdate(c, request.resource.data)
+          && linkedInventory(shop, version, c, request.resource.data) && releasedInventory(shop, version, c, request.resource.data.get('soldBy', ''));
+        allow delete: if isRecord(c) && writer(shop) && mutation(shop, version) && releasedInventory(shop, version, c, '');
       }
     }
   }

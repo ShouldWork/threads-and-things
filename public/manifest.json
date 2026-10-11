@@ -1,2 +1,2 @@
-{ "name": "Threads and Things", "short_name": "Threads", "start_url": "/", "display": "standalone", "background_color": "#fbf4f2", "theme_color": "#d4607a",
-  "icons": [{ "src": "/icon.png", "sizes": "400x324", "type": "image/png" }] }
+{ "name": "Threads and Things", "short_name": "Threads", "start_url": "/", "display": "standalone", "background_color": "#fffbfc", "theme_color": "#fffbfc",
+  "icons": [{ "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" }, { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" }, { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }] }

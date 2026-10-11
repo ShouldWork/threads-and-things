@@ -2,3 +2,10 @@ node_modules
 dist
 .env
 .firebase
+.tools/
+playwright-report/
+test-results/
+*-debug.log
+.env.preview.local
+
+.codex-reviews/

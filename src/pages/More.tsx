@@ -1,84 +1,112 @@
-import { useState } from "react";
-import type { Data, Sale } from "../types";
-import { parseWorkbook, saleKey } from "../lib/parse";
-import { parseDepopListingsHtml } from "../lib/depopHtml";
-import { addMany, replaceAll, saveSettings, currentShop } from "../hooks/useData";
-import { logout } from "../firebase";
-import { money, today } from "../lib/calc";
-import { Field } from "../components/ui";
+import { useEffect, useMemo, useState } from 'react';
+import type { Data, Settings } from '../types';
+import { importData, saveSettings, currentShop, newRecordId, type ImportChanges, type HistoryEntry } from '../hooks/useData';
+import { logout } from '../firebase';
+import { money, today } from '../lib/calc';
+import { COLS, prepareRow, type ColName, type Row } from '../lib/records';
+import { previewImport } from '../lib/importPlan';
+import DataTools from '../components/DataTools';
+import { Chips, Field, FileButton } from '../components/ui';
+import { savedTheme, setTheme, type Theme } from '../lib/theme';
+import type { Kind } from '../components/Forms';
 
-export default function More({ data, email, toast }: { data: Data; email: string; toast: (s: string) => void }) {
-  const [busy, setBusy] = useState(""); const [err, setErr] = useState("");
-  const [name, setName] = useState(data.settings.name); const [taxPct, setTaxPct] = useState(Math.round(data.settings.taxPct * 100)); const [rate, setRate] = useState(data.settings.mileageRate);
-
-  async function importFile(f: File | null | undefined, mode: "merge" | "replace") {
-    if (!f) return; setErr(""); setBusy("Reading file…");
+type Props = { data: Data; email: string; pending: boolean; history:HistoryEntry[];version:string;revision:number;role:string; toast: (s:string)=>void; onEdit: (kind:Kind,row:Row)=>void };
+export default function More({data,email,pending,history,version,revision,role,toast,onEdit}: Props) {
+  const [busy,setBusy]=useState(''), [err,setErr]=useState('');
+  const [theme,setThemeState]=useState<Theme>(savedTheme);
+  const [proposal,setProposal]=useState<{name:string; changes:ImportChanges;suggestedSettings?:Partial<Settings>}|null>(null);
+  const [name,setName]=useState(data.settings.name), [taxPct,setTaxPct]=useState(data.settings.taxPct*100), [rate,setRate]=useState(data.settings.mileageRate);
+  const [recordKind,setRecordKind]=useState<ColName>('expenses');
+  const [decisions,setDecisions]=useState<Record<string,string>>({});
+  useEffect(()=>{setName(data.settings.name);setTaxPct(data.settings.taxPct*100);setRate(data.settings.mileageRate);},[data.settings]);
+  async function readFile(file:File|undefined,kind:'depop'|'tracker'|'html') {
+    if(!file || busy) return;
+    setErr('');setProposal(null);setDecisions({});setBusy('Reading file…');
     try {
-      if (/\.html?$/i.test(f.name)) {
-        const rows = parseDepopListingsHtml(await f.text(), data.settings.shopStart);
-        if (!rows.length) throw new Error("No listings found in that page. Save the Selling hub › Active page after clicking Load more until it is gone.");
-        setBusy(`Saving ${rows.length} listings…`);
-        await replaceAll("listings", data.listings.map(l => l.id!), rows);
-        await saveSettings({ snapshot: today() });
-        toast(`${rows.length} listings loaded. Snapshot date set to today.`); setBusy(""); return;
+      if(file.size > 20*1024*1024) throw new Error('Choose a file smaller than 20 MB.');
+      let changes:ImportChanges;
+      let suggestedSettings:Partial<Settings>|undefined;
+      if(kind === 'html') {
+        const {parseDepopListingsHtml}=await import('../lib/depopHtml');
+        const rows=parseDepopListingsHtml(await file.text(),data.settings.shopStart);
+        if(!rows.length) throw new Error('No listings found. Save the complete Selling hub Active page after loading all listings.');
+        changes={merge:{listings:rows},settings:{snapshot:today()}};
+      } else {
+        const {parseWorkbook}=await import('../lib/parse');
+        const parsed=parseWorkbook(await file.arrayBuffer(),data.settings.shopStart);
+        if(kind === 'depop' && parsed.kind === 'tracker') throw new Error('Use the tracker importer for this workbook.');
+        changes={sales:parsed.sales,merge:{},settings:{}};
+        if(kind === 'tracker') {
+          for(const c of COLS) if(c!=='sales' && parsed[c] !== undefined) changes.merge![c]=parsed[c];
+          const settings:Partial<Settings>={};
+          if(parsed.snapshot)settings.snapshot=parsed.snapshot;
+          suggestedSettings={};
+          if(parsed.taxPct !== undefined)suggestedSettings.taxPct=parsed.taxPct;
+          if(parsed.mileageRate !== undefined)suggestedSettings.mileageRate=parsed.mileageRate;
+          changes.settings=settings;
+        }
       }
-      const p = parseWorkbook(await f.arrayBuffer(), data.settings.shopStart);
-      let msg: string[] = [];
-      if (p.sales) {
-        if (mode === "replace") { setBusy("Replacing sales…"); await replaceAll("sales", data.sales.map(s => s.id!), p.sales); msg.push(`${p.sales.length} sales`); }
-        else { const have = new Set(data.sales.map(saleKey)); const fresh = p.sales.filter(s => !have.has(saleKey(s))); setBusy(`Adding ${fresh.length} new sales…`); await addMany("sales", fresh as Sale[]); msg.push(`${fresh.length} new sales (${p.sales.length - fresh.length} already here)`); }
-      }
-      if (p.kind === "tracker") {
-        if (p.listings) { await replaceAll("listings", data.listings.map(l => l.id!), p.listings); msg.push(`${p.listings.length} listings`); }
-        if (p.inventory?.length) { await replaceAll("inventory", data.inventory.map(i => i.id!), p.inventory); msg.push(`${p.inventory.length} inventory`); }
-        if (p.expenses) { await replaceAll("expenses", data.expenses.map(e => e.id!), p.expenses); msg.push(`${p.expenses.length} expenses`); }
-        if (p.mileage) { await replaceAll("mileage", data.mileage.map(t => t.id!), p.mileage); msg.push(`${p.mileage.length} trips`); }
-        if (p.time) { await replaceAll("time", data.time.map(t => t.id!), p.time); msg.push(`${p.time.length} time rows`); }
-        if (p.issues) { await replaceAll("issues", data.issues.map(i => i.id!), p.issues); msg.push(`${p.issues.length} issues`); }
-        const s: Record<string, unknown> = {}; if (p.snapshot) s.snapshot = p.snapshot; if (p.taxPct) s.taxPct = p.taxPct; if (p.mileageRate) s.mileageRate = p.mileageRate; if (Object.keys(s).length) await saveSettings(s);
-      }
-      toast("Imported: " + msg.join(", "));
-    } catch (e: unknown) { setErr(e instanceof Error ? e.message : "Import failed."); }
-    setBusy("");
+      changes.sales?.forEach((row,i)=>{try{prepareRow('sales',row);}catch(e){throw new Error(`Sales row ${i+1}: ${(e as Error).message}`);}});
+      for(const [c,rows] of Object.entries(changes.merge || {})) rows!.forEach((row,i)=>{try{prepareRow(c as ColName,row,true);}catch(e){throw new Error(`${c} row ${i+1}: ${(e as Error).message}`);}});
+      if(!changes.sales?.length && !Object.keys(changes.merge || {}).length)throw new Error('This file contains no records to import.');
+      changes.sales=changes.sales?.map(s=>({...s,id:newRecordId()}));changes.label=file.name;
+      setProposal({name:file.name,changes,suggestedSettings});
+    } catch(e){setErr((e as Error).message);} finally {setBusy('');}
   }
-  function exportCsv() {
-    const cols = ["date", "listed", "platform", "sku", "brand", "cat", "size", "desc", "price", "ship", "depopFee", "payFee", "boost", "usps", "refund", "feeBack", "cogs", "tax", "state"];
-    const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-    const csv = [cols.join(","), ...data.sales.map(s => cols.map(c => esc((s as unknown as Record<string, unknown>)[c])).join(","))].join("\n");
-    const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" })); a.download = `threads-and-things-sales-${today()}.csv`; a.click();
+  async function applyImport(){
+    if(!proposal || busy)return;
+    setErr('');setBusy('Saving and verifying the import…');
+    try{const result=await importData({...proposal.changes,decisions});toast(`Imported: ${result.added} new, ${result.updated} updated, ${result.unchanged} unchanged.`);setProposal(null);}
+    catch(e){setErr((e as Error).message);}finally{setBusy('');}
   }
+  function exportCsv(){
+    const columns=['date','listed','platform','sku','brand','cat','size','desc','price','ship','depopFee','payFee','boost','usps','refund','feeBack','cogs','tax','state','buyer','sourceId'];
+    const esc=(v:unknown)=>{let value=String(v??'');if(/^\s*[=+@-]/.test(value))value="'"+value;return '"'+value.replace(/"/g,'""')+'"';};
+    const csv=[columns.join(','),...data.sales.map(s=>columns.map(c=>esc((s as unknown as Row)[c])).join(','))].join('\r\n');
+    const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'})); const a=document.createElement('a');a.href=url;a.download=`threads-and-things-sales-${today()}.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  }
+  const chooser=(label:string,accept:string,kind:'depop'|'tracker'|'html')=><FileButton label={label} accept={accept} disabled={!!busy} onFile={f=>void readFile(f,kind)}/>;
+  const records=data[recordKind] as unknown as Row[];
+  const kinds:Partial<Record<ColName,Kind>>={expenses:'expense',mileage:'trip',time:'time',issues:'issue'};
+  const reviewed=useMemo(()=>{try{return{plan:proposal?previewImport(data,{...proposal.changes,decisions}):null,error:''};}catch(e){return{plan:null,error:(e as Error).message};}},[data,proposal,decisions]);
+  const merged=reviewed.plan;
   return <>
     <h1>More</h1><p className="sub">Imports, settings and your account.</p>
-
-    <div className="card"><h3>Import a Depop sales export</h3>
-      <p style={{ margin: "0 0 8px" }}>Selling hub › Sales › Export on Depop. New sales are added; ones already here are skipped.</p>
-      <label className="btn primary" style={{ display: "inline-block", cursor: "pointer" }}>Choose export file<input type="file" accept=".xlsx,.xls,.csv" hidden onChange={e => importFile(e.target.files?.[0], "merge")} /></label>
+    <div className="card"><h3>Import a Depop sales export</h3><p>Update matching sales and add new ones after you review the file.</p>{chooser('Choose export file','.xlsx,.xls,.csv','depop')}</div>
+    <div className="card"><h3>Import your Depop listings page</h3><p>Load every listing in Selling hub › Active, then save the page as “Webpage, Complete”.</p>{chooser('Choose saved page','.html,.htm','html')}</div>
+    <div className="card"><h3>Import the tracker spreadsheet</h3><p>Update matching records and add new ones. Inventory is matched by SKU. Notes, protected edits and records missing from the file stay saved.</p>{chooser('Choose tracker .xlsx','.xlsx','tracker')}</div>
+    {proposal && <div className="card" role="region" aria-label="Review import"><h3>Review {proposal.name}</h3>
+      <p>{merged?.added || 0} new; {merged?.updated || 0} updated; {merged?.unchanged || 0} unchanged; {merged?.skipped || 0} skipped.</p>
+      <ul>{Object.entries(merged?.collections || {}).map(([c,counts])=><li key={c}>{c}: {counts!.added} new, {counts!.updated} updated, {counts!.unchanged} unchanged.</li>)}</ul>
+      {reviewed.error && <p role="alert" className="err">{reviewed.error}</p>}
+      {merged?.uncertain.map(match=><div key={match.index}><p><b>Review sales row {match.index+1}: {match.sale.desc}</b><br/>{match.sale.date} · {money(match.sale.price)}<br/>{match.reason}</p><Field label={`Match for sales row ${match.index+1}`}><select value={decisions[match.index] || ''} onChange={e=>setDecisions(d=>({...d,[match.index]:e.target.value}))}><option value="">Choose what to do...</option>{match.candidates.map(s=><option key={s.id} value={s.id}>Update {s.desc} · {s.date} · {money(s.price)} · SKU {s.sku || 'none'}</option>)}<option value="new">Add as a separate sale</option><option value="skip">Skip this row</option></select></Field></div>)}
+      {Object.entries(decisions).filter(([,choice])=>choice).map(([index,choice])=><p className="note" key={index}>Reviewed sales row {Number(index)+1}: {choice==='new'?'add a separate sale':choice==='skip'?'skip this row':`update ${data.sales.find(s=>s.id===choice)?.desc || proposal.changes.sales?.find(s=>s.id===choice)?.desc || 'the chosen sale'}`}. <button className="btn small" onClick={()=>setDecisions(d=>{const next={...d};delete next[index];return next;})}>Review again</button></p>)}
+      <p className="note">Protected app edits keep their current values. Open a record and choose “Use latest imported values” to release that protection.</p>
+      {Object.entries(proposal.suggestedSettings || {}).map(([key,value])=><label key={key} style={{display:'block'}}><input type="checkbox" checked={proposal.changes.settings?.[key as keyof Settings]===value} onChange={e=>{const checked=e.target.checked;setProposal(p=>{if(!p)return p;const settings={...p.changes.settings};if(checked)Object.assign(settings,{[key]:value});else delete settings[key as keyof Settings];return{...p,changes:{...p.changes,settings}};});}}/> Apply tracker {key==='taxPct'?`tax set-aside (${Number(value)*100}%)`:`mileage rate (${money(Number(value))}/mile)`}</label>)}
+      {proposal.changes.sales?.some(s=>!s.sourceId) && <p className="note">Some rows have no transaction ID. Possible matches require your review; identical transactions without IDs cannot be distinguished automatically.</p>}
+      <p className="note">Your current data stays available if saving fails. Imports require an internet connection and all pending changes to finish syncing.</p>
+      <div className="actions"><button className="btn primary" disabled={!!busy || pending || !navigator.onLine || !merged || !!merged.uncertain.length} onClick={applyImport}>Import these changes</button><button className="btn" disabled={!!busy} onClick={()=>setProposal(null)}>Cancel import</button></div>
+    </div>}
+    {busy && <p role="status">{busy}</p>}{err && <p role="alert" className="err">{err}</p>}
+    <div className="card"><h3>Settings</h3><form className="form" onSubmit={async e=>{
+      e.preventDefault();if(busy)return;setBusy('Saving settings…');setErr('');
+      try{const result=await saveSettings({name,taxPct:taxPct/100,mileageRate:rate});toast(result.queued?'Settings saved on this device; will sync.':'Settings saved.');}catch(e){setErr((e as Error).message);}finally{setBusy('');}
+    }}>
+      <Field label="Your first name"><input required value={name} onChange={e=>setName(e.target.value)}/></Field>
+      <div className="grid2"><Field label="Tax set-aside %"><input type="number" min={0} max={60} step="0.1" required value={taxPct} onChange={e=>setTaxPct(e.target.valueAsNumber)}/></Field><Field label="Mileage rate $/mile"><input type="number" min={0} max={100} step="0.01" required value={rate} onChange={e=>setRate(e.target.valueAsNumber)}/></Field></div>
+      <p className="note">Listings last imported: {data.settings.snapshot}. Listing ages advance through today.</p><button className="btn primary" disabled={!!busy}>Save settings</button>
+    </form></div>
+    <div className="card"><h3>Appearance</h3>
+      <Chips value={theme} onChange={t=>{setThemeState(t);setTheme(t);}} label="Appearance" options={[['auto','Match phone'],['light','Light'],['dark','Dark']]}/>
+      <p className="note" style={{margin:'6px 0 0'}}>Saved on this phone only.</p>
     </div>
-    <div className="card"><h3>Import your Depop listings page</h3>
-      <p style={{ margin: "0 0 8px" }}>On a computer: Selling hub › Active, click <b>Load more</b> until it disappears, then save the page (Ctrl+S, "Webpage, Complete"). Load the .html file here. This replaces the listings list and sets the snapshot date to today.</p>
-      <label className="btn" style={{ display: "inline-block", cursor: "pointer" }}>Choose saved page<input type="file" accept=".html,.htm" hidden onChange={e => importFile(e.target.files?.[0], "replace")} /></label>
+    <div className="card"><h3>Manage your logs</h3>
+      <select aria-label="Log to edit" value={recordKind} onChange={e=>setRecordKind(e.target.value as ColName)}>{['expenses','mileage','time','issues'].map(c=><option key={c} value={c}>{c}</option>)}</select>
+      {!records.length && <p className="note">No records yet. Add one with +.</p>}
+      {records.map(row=><button className="rowbtn" key={row.id} onClick={()=>onEdit(kinds[recordKind]!,row)}><div className="row"><span>{String(row.date || 'No date')} · {String(row.desc || row.purpose || row.activity || row.what || row.type || recordKind)}</span><span>{row.amount!==undefined?money(Number(row.amount)):row.miles!==undefined?`${row.miles} mi`:row.minutes!==undefined?`${row.minutes} min`:money(Number(row.lost || 0))}</span></div></button>)}
     </div>
-    <div className="card"><h3>Import the tracker spreadsheet</h3>
-      <p style={{ margin: "0 0 8px" }}>One-time move from the Excel/Google Sheets tracker. Sales are merged; inventory, expenses, mileage, time, issues and listings are <b>replaced</b> with what is in the file.</p>
-      <label className="btn" style={{ display: "inline-block", cursor: "pointer" }}>Choose tracker .xlsx<input type="file" accept=".xlsx" hidden onChange={e => importFile(e.target.files?.[0], "merge")} /></label>
-    </div>
-    {busy && <p className="note" role="status">{busy}</p>}{err && <p className="err" role="alert">{err}</p>}
-
-    <div className="card"><h3>Settings</h3>
-      <div className="form" style={{ marginTop: 4 }}>
-        <Field label="Your first name"><input value={name} onChange={e => setName(e.target.value)} /></Field>
-        <div className="grid2"><Field label="Tax set-aside %"><input type="number" min={0} max={60} value={taxPct} onChange={e => setTaxPct(parseInt(e.target.value) || 0)} /></Field><Field label="Mileage rate $/mile"><input type="number" step="0.01" value={rate} onChange={e => setRate(parseFloat(e.target.value) || 0)} /></Field></div>
-        <p className="note" style={{ margin: 0 }}>Listings snapshot date: {data.settings.snapshot}. Set automatically when you import a listings page.</p>
-        <div className="actions"><button type="button" className="btn primary" onClick={async () => { await saveSettings({ name: name || "there", taxPct: taxPct / 100, mileageRate: rate }); toast("Settings saved."); }}>Save settings</button></div>
-      </div>
-    </div>
-    <div className="card"><h3>Your data</h3>
-      <table><tbody>
-        <tr><td>Sales</td><td>{data.sales.length}</td></tr><tr><td>Listings</td><td>{data.listings.length}</td></tr><tr><td>Inventory</td><td>{data.inventory.length}</td></tr>
-        <tr><td>Expenses</td><td>{data.expenses.length} ({money(data.expenses.reduce((a, e) => a + e.amount, 0))})</td></tr><tr><td>Time / mileage / issues</td><td>{data.time.length} / {data.mileage.length} / {data.issues.length}</td></tr>
-      </tbody></table>
-      <div className="actions"><button type="button" className="btn" onClick={exportCsv}>Download sales as CSV</button></div>
-    </div>
-    <div className="card"><h3>Account</h3><p style={{ margin: "0 0 8px" }}>Signed in as {email}. Shop: <b>{currentShop()}</b>. Data saves to the cloud instantly and works offline until you reconnect.</p><button type="button" className="btn" onClick={logout}>Sign out</button></div>
+    <div className="card"><h3>Your data</h3><table><tbody>{COLS.map(c=><tr key={c}><td>{c}</td><td>{data[c].length}</td></tr>)}</tbody></table><div className="actions"><button className="btn" onClick={exportCsv}>Download sales as CSV</button></div></div>
+    <DataTools data={data} history={history} version={version} revision={revision} canReset={role==='owner'} disabled={!!busy || pending || !navigator.onLine} toast={toast} onBusy={b=>setBusy(b?'Saving data changes...':'')}/>
+    <div className="card"><h3>Account</h3><p>Signed in as {email}. Shop: <b>{currentShop()}</b>.</p><p className="note">{pending?'Changes on this device are waiting to sync. Reconnect before signing out.':'All local changes have synced.'} Only use this app on a trusted device; offline records remain in this browser.</p><button className="btn" disabled={pending || !!busy} onClick={()=>logout().catch(e=>setErr(e.message))}>Sign out</button></div>
   </>;
 }

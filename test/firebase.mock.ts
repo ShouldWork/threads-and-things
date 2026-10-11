@@ -1,4 +1,5 @@
 export const configured = true;
+export const demo = true;
 let cb: ((u: unknown) => void) | null = null;
 const user = { email: "sierra@example.com" };
 export const login = async () => { cb?.(user); };

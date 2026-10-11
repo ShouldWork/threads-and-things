@@ -54,9 +54,9 @@ describe("forecast", () => {
 });
 
 describe("goalPlan", () => {
-  const rr = runRate(data, "30", ASOF); const g = goalPlan(data, rr, 100);
+  const rr = runRate(data, "30", ASOF); const g = goalPlan(data, rr, 100, ASOF);
   it("compares the target to the current monthly pace", () => { expect(g.currentMonthly).toBe(10.64); expect(g.gap).toBe(89.36); expect(g.onTrack).toBe(false); expect(g.overheadMonthly).toBe(11.15); });
   it("turns the target into sales, listings, cash and hours", () => { expect(g.avgProfit).toBe(10.75); expect(g.salesNeeded).toBe(11); expect(g.perWeek).toBe(2.53); expect(g.listingsNeeded).toBe(19); expect(g.cashNeeded).toBe(66.5); expect(g.profitPerHour).toBe(25); expect(g.hoursNeeded).toBe(4.45); });
-  it("is on track when the pace beats the target", () => { expect(goalPlan(data, rr, 10).onTrack).toBe(true); });
-  it("cannot plan without any profitable sales", () => { const z = runRate({ ...data, sales: [] }, "30", ASOF); const p = goalPlan({ ...data, sales: [], listings: [] }, z, 100); expect(p.salesNeeded).toBe(0); expect(p.listingsNeeded).toBeNull(); expect(p.cashNeeded).toBeNull(); });
+  it("is on track when the pace beats the target", () => { expect(goalPlan(data, rr, 10, ASOF).onTrack).toBe(true); });
+  it("cannot plan without any profitable sales", () => { const z = runRate({ ...data, sales: [] }, "30", ASOF); const p = goalPlan({ ...data, sales: [], listings: [] }, z, 100, ASOF); expect(p.reachable).toBe(false); expect(p.salesNeeded).toBeNull(); expect(p.perWeek).toBeNull(); expect(p.listingsNeeded).toBeNull(); expect(p.cashNeeded).toBeNull(); });
 });

@@ -1,22 +1,32 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { LISTS, type Data, type Sale, type Item, type Expense, type Trip, type TimeRow, type Issue, type Listing } from "../types";
 import { today, newSku, net, money } from "../lib/calc";
-import { add, update, remove, type ColName } from "../hooks/useData";
+import { add, update, remove, saveSale, newRecordId, type ColName } from "../hooks/useData";
+import { prepareRow } from '../lib/records';
+import { saleKey } from '../lib/imports';
+import { markManual, sourceValues } from '../lib/importRecords';
 import { Field, Select } from "./ui";
 
 export type Kind = "sale" | "item" | "expense" | "time" | "trip" | "issue" | "listing";
 export const KIND_LABEL: Record<Kind, string> = { sale: "Sale", item: "Inventory item", expense: "Expense", time: "Time", trip: "Mileage", issue: "Issue", listing: "Listing" };
 const COL: Record<Kind, ColName> = { sale: "sales", item: "inventory", expense: "expenses", time: "time", trip: "mileage", issue: "issues", listing: "listings" };
 
-type Props = { kind: Kind; data: Data; initial?: Partial<Sale & Item & Expense & Trip & TimeRow & Issue & Listing> & { id?: string }; onDone: (msg: string) => void; onCancel: () => void };
+// Every storage spot used so far, so the location box can suggest them.
+export const locations = (data: Data) => Array.from(new Set(data.inventory.map(i => (i.location || "").trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+
+type Props ={ kind: Kind; data: Data; initial?: Partial<Sale & Item & Expense & Trip & TimeRow & Issue & Listing> & { id?: string }; onDone: (msg: string) => void; onCancel: () => void };
 
 export default function Form({ kind, data, initial, onDone, onCancel }: Props) {
   const editing = !!initial?.id;
+  const recordId = useRef(initial?.id || newRecordId());
+  const saving = useRef(false);
   const [busy, setBusy] = useState(false); const [err, setErr] = useState("");
   const [confirmDel, setConfirmDel] = useState(false);
+  const [protectEdits,setProtectEdits] = useState(true);
+  const [costTouched,setCostTouched] = useState(false);
   const defaults: Record<Kind, object> = {
     sale: { date: today(), listed: "", brand: "", cat: "Tops", size: "M", desc: "", price: 0, ship: 0, depopFee: 0, payFee: 0, boost: 0, usps: 0, refund: 0, feeBack: 0, cogs: 0, state: "", sku: "", platform: "Depop", tax: 0 },
-    item: { sku: newSku(data.inventory.map(i => i.sku)), acquired: today(), source: "Thrift store", cost: 0, cat: "Tops", size: "M", brand: "", desc: "", platform: "Depop", listed: "", status: "Unlisted", outcome: "", notes: "" },
+    item: { sku: newSku(data.inventory.map(i => i.sku)), acquired: today(), source: "Thrift store", cost: 0, cat: "Tops", size: "M", brand: "", desc: "", platform: "Depop", listed: "", status: "Unlisted", outcome: "", notes: "", location: "" },
     expense: { date: today(), cat: "Packing supplies", vendor: "", desc: "", amount: 0, paidWith: "Business checking", receipt: false, notes: "" },
     time: { date: today(), activity: "Listing", minutes: 30, notes: "" },
     trip: { date: today(), purpose: "Post office", miles: 0 },
@@ -25,35 +35,48 @@ export default function Form({ kind, data, initial, onDone, onCancel }: Props) {
   };
   // "boosted" on a sale is a form-only switch (the saved field is the boost fee); on a listing it is a real field.
   const [f, setF] = useState<Record<string, unknown>>({ ...defaults[kind], ...(initial || {}), ...(kind === "sale" && initial ? { boosted: Number(initial.boost || 0) > 0 } : {}) });
-  const s = (k: string, v: unknown) => setF(o => ({ ...o, [k]: v }));
+  const s = (k: string, v: unknown) => {if(k==='cogs')setCostTouched(true);setF(o => ({ ...o, [k]: v }));};
   const str = (k: string) => String(f[k] ?? ""); const n = (k: string) => Number(f[k] ?? 0);
-  const num = (k: string, step = "0.01") => <input type="number" inputMode="decimal" step={step} value={f[k] == null ? "" : String(f[k])} onChange={e => s(k, e.target.value === "" ? 0 : parseFloat(e.target.value))} />;
+  const num = (k: string, step = "0.01") => <input type="number" inputMode="decimal" step={step} min={0} value={f[k] == null ? "" : String(f[k])} onChange={e => s(k, e.target.value === "" ? 0 : parseFloat(e.target.value))} />;
   const text = (k: string, ph = "") => <input type="text" value={str(k)} onChange={e => s(k, e.target.value)} placeholder={ph} />;
-  const date = (k: string) => <input type="date" value={str(k)} onChange={e => s(k, e.target.value)} />;
+  const date = (k: string) => <input type="date" required={["date","acquired","posted"].includes(k)} value={str(k)} onChange={e => s(k, e.target.value)} />;
 
   // Sale helper: estimate Depop fees from price + shipping if the user hasn't entered them
   const estimateFees = () => { const price = n("price"); const ship = n("ship"); const tax = n("tax"); const pay = Math.round((0.033 * (price + ship + tax) + 0.45) * 100) / 100; s("payFee", pay); if (f.boosted) s("boost", Math.round(price * 0.12 * 100) / 100); };
   const skuMatch = kind === "sale" && str("sku") ? data.inventory.find(i => i.sku === str("sku")) : undefined;
 
-  async function save() {
-    setBusy(true); setErr("");
+  async function persist(deleting = false) {
+    if (saving.current) return;
+    saving.current = true; setBusy(true); setErr('');
     try {
-      const row: Record<string, unknown> = { ...f }; if (kind === "sale") delete row.boosted;
-      if (kind === "sale") { if (!row.desc && !row.price) throw new Error("Add at least a description or a price."); if (skuMatch && !row.cogs) row.cogs = skuMatch.cost; }
-      if (kind === "item" && !row.sku) throw new Error("Every item needs a SKU.");
-      if (kind === "expense" && !n("amount")) throw new Error("Enter an amount.");
-      if (kind === "time" && !n("minutes")) throw new Error("Enter minutes.");
-      if (kind === "trip" && !n("miles")) throw new Error("Enter miles.");
-      if (editing) await update(COL[kind], initial!.id!, row); else await add(COL[kind], row);
-      // When a sale is logged against a SKU, mark that inventory item sold
-      if (kind === "sale" && skuMatch && skuMatch.id && !/sold/i.test(skuMatch.status)) await update("inventory", skuMatch.id, { status: "Sold", outcome: str("date") });
-      onDone(editing ? "Saved." : `${KIND_LABEL[kind]} added.`);
-    } catch (e: unknown) { setErr(e instanceof Error ? e.message : "Could not save."); }
-    setBusy(false);
+      let row: Record<string, unknown> = { ...f }; delete row.boosted;
+      if (kind === 'listing') row.boosted = f.boosted;
+      if (kind === 'item' && initial) {
+        const linked = (initial as Record<string, unknown>).soldBy;
+        if (linked && (deleting || row.sku !== initial.sku || row.status !== initial.status || row.outcome !== initial.outcome)) {
+          throw new Error('Edit or delete the linked sale to change this item’s sold status or SKU.');
+        }
+      }
+      let result;
+      if (kind === 'sale') {
+        if (skuMatch && !row.cogs && !costTouched && !editing) row.cogs = skuMatch.cost;
+        if (initial) row.importKey = saleKey(initial as Sale);
+        if (!deleting) row = markManual('sales',row,initial,protectEdits);
+        result = await saveSale(data, recordId.current, deleting ? null : prepareRow('sales',row) as unknown as Sale, editing ? initial as Sale : undefined);
+      } else if (deleting) result = await remove(COL[kind], recordId.current);
+      else {
+        if (kind === 'item' && data.inventory.some(i => i.sku === row.sku && i.id !== initial?.id)) throw new Error('This SKU is already in inventory.');
+        const clean = markManual(COL[kind],row,initial,protectEdits);
+        result = editing ? await update(COL[kind],recordId.current,clean) : await add(COL[kind],clean,recordId.current);
+      }
+      onDone(result.queued ? (deleting ? 'Deletion queued; will sync.' : 'Saved on this device; will sync.') : deleting ? 'Deleted.' : 'Saved.');
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Could not save.'); }
+    finally { saving.current=false; setBusy(false); }
   }
-  async function del() { if (!initial?.id) return; setBusy(true); try { await remove(COL[kind], initial.id); onDone("Deleted."); } catch { setErr("Could not delete."); setBusy(false); } }
 
-  return <form className="form" onSubmit={e => { e.preventDefault(); save(); }}>
+  return <form className="form" aria-busy={busy} onSubmit={e => { e.preventDefault(); persist(); }}>
+    <fieldset disabled={busy} className="formfields">
+    {initial?.sourceData && <div><label><input type="checkbox" checked={protectEdits} onChange={e=>setProtectEdits(e.target.checked)}/> Protect my edits on future imports</label><p className="note">Imported values update automatically. Fields you edit here stay as you set them while protection is enabled.</p><button type="button" className="btn small" onClick={()=>{setF(o=>({...o,...sourceValues(initial),manualFields:'[]'}));setProtectEdits(false);}}>Use latest imported values</button></div>}
     {kind === "sale" && <>
       <div className="grid2"><Field label="Date sold">{date("date")}</Field><Field label="Platform"><Select value={str("platform")} onChange={v => s("platform", v)} options={LISTS.platforms} /></Field></div>
       <Field label="Description">{text("desc", "Brand, color, style, item, size")}</Field>
@@ -63,7 +86,10 @@ export default function Form({ kind, data, initial, onDone, onCancel }: Props) {
       <div className="grid2"><Field label="Item price">{num("price")}</Field><Field label="Buyer paid shipping">{num("ship")}</Field></div>
       <div className="grid2"><Field label="Sales tax collected">{num("tax")}</Field><Field label="Date listed">{date("listed")}</Field></div>
       <div className="actions"><button type="button" className="btn small" onClick={estimateFees}>Estimate Depop fees</button><label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: ".85rem", fontWeight: 700 }}><input type="checkbox" checked={!!f.boosted} onChange={e => { s("boosted", e.target.checked); if (!e.target.checked) s("boost", 0); }} /> Boosted</label></div>
-      <div className="grid2"><Field label="Payment fee">{num("payFee")}</Field><Field label="Boost fee">{num("boost")}</Field></div>
+      <div className="grid2"><Field label="Depop selling fee">{num("depopFee")}</Field>
+      <Field label="Fees refunded">{num("feeBack")}</Field>
+      <Field label="Buyer">{text("buyer")}</Field>
+      <Field label="Payment fee">{num("payFee")}</Field><Field label="Boost fee">{num("boost")}</Field></div>
       <div className="grid2"><Field label="Item cost (COGS)">{num("cogs")}</Field><Field label="Label cost you paid">{num("usps")}</Field></div>
       <div className="grid2"><Field label="Refunded to buyer">{num("refund")}</Field><Field label="Buyer state">{text("state", "TX")}</Field></div>
       <p className="note" style={{ margin: 0 }}>Net payout: <b>{money(net({ ...(f as unknown as Sale) }))}</b> · profit after cost: <b>{money(net({ ...(f as unknown as Sale) }) - n("cogs"))}</b></p>
@@ -74,6 +100,8 @@ export default function Form({ kind, data, initial, onDone, onCancel }: Props) {
       <div className="grid2"><Field label="Category"><Select value={str("cat")} onChange={v => s("cat", v)} options={LISTS.categories} /></Field><Field label="Size"><Select value={str("size")} onChange={v => s("size", v)} options={LISTS.sizes} /></Field></div>
       <div className="grid2"><Field label="Brand">{text("brand")}</Field><Field label="Cost paid">{num("cost")}</Field></div>
       <div className="grid2"><Field label="Source"><Select value={str("source")} onChange={v => s("source", v)} options={LISTS.sources} /></Field><Field label="Status"><Select value={str("status")} onChange={v => s("status", v)} options={LISTS.itemStatus} /></Field></div>
+      <Field label="Where it's stored"><input type="text" list="tt-locations" autoComplete="off" value={str("location")} onChange={e => s("location", e.target.value)} placeholder="Bin 3, closet shelf, garage tote..." /></Field>
+      <datalist id="tt-locations">{locations(data).map(l => <option key={l} value={l} />)}</datalist>
       <div className="grid2"><Field label="Listed on"><Select value={str("platform")} onChange={v => s("platform", v)} options={LISTS.platforms} allowBlank /></Field><Field label="Date listed">{date("listed")}</Field></div>
       <Field label="Outcome date (sold, donated...)">{date("outcome")}</Field>
       <Field label="Notes"><textarea value={str("notes")} onChange={e => s("notes", e.target.value)} /></Field>
@@ -107,16 +135,17 @@ export default function Form({ kind, data, initial, onDone, onCancel }: Props) {
     {kind === "listing" && <>
       <Field label="Description">{text("desc")}</Field>
       <div className="grid2"><Field label="Category"><Select value={str("cat")} onChange={v => s("cat", v)} options={LISTS.categories} /></Field><Field label="Size"><Select value={str("size")} onChange={v => s("size", v)} options={LISTS.sizes} /></Field></div>
-      <div className="grid2"><Field label="Current price">{num("price")}</Field><Field label="Original price (if marked down)"><input type="number" step="0.01" value={f.orig == null ? "" : String(f.orig)} onChange={e => s("orig", e.target.value === "" ? null : parseFloat(e.target.value))} /></Field></div>
+      <div className="grid2"><Field label="Current price">{num("price")}</Field><Field label="Original price (if marked down)"><input type="number" min={0} step="0.01" value={f.orig == null ? "" : String(f.orig)} onChange={e => s("orig", e.target.value === "" ? null : parseFloat(e.target.value))} /></Field></div>
       <div className="grid2"><Field label="Posted date">{date("posted")}</Field><Field label="Status"><Select value={str("status")} onChange={v => s("status", v)} options={["Active", "Sold", "Removed", "Relisted"]} /></Field></div>
       <Field label="Depop link">{text("link", "https://www.depop.com/products/...")}</Field>
       <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: ".9rem" }}><input type="checkbox" checked={!!f.boosted} onChange={e => s("boosted", e.target.checked)} /> Boosted</label>
     </>}
+    </fieldset>
     {err && <p className="err" role="alert" style={{ margin: 0 }}>{err}</p>}
     <div className="actions">
       <button type="submit" className="btn primary" disabled={busy}>{busy ? "Saving…" : editing ? "Save changes" : "Add"}</button>
       <button type="button" className="btn" onClick={onCancel}>Cancel</button>
-      {editing && (!confirmDel ? <button type="button" className="btn danger" onClick={() => setConfirmDel(true)}>Delete</button> : <><span className="note">Really delete?</span><button type="button" className="btn danger" onClick={del}>Yes, delete</button></>)}
+      {editing && (!confirmDel ? <button type="button" className="btn danger" disabled={busy} onClick={() => setConfirmDel(true)}>Delete</button> : <><span className="note">Really delete?</span><button type="button" className="btn danger" disabled={busy} onClick={() => persist(true)}>Yes, delete</button></>)}
     </div>
   </form>;
 }

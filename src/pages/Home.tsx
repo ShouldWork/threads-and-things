@@ -1,36 +1,26 @@
 import { useMemo, useState } from "react";
 import type { Data, Sale } from "../types";
-import { money, pct, net, days, isKids, DAY } from "../lib/calc";
+import { money, pct, net, days, isKids, today } from "../lib/calc";
 import { Kpi, Chips, Bars, HBars, I } from "../components/ui";
 
-type Range = "all" | "30" | "7";
-function rangeSales(sales: Sale[], range: Range) {
-  if (range === "all" || !sales.length) return sales;
-  const end = Date.parse(sales.reduce((m, s) => (s.date > m ? s.date : m), "2000-01-01"));
-  const span = range === "30" ? 30 : 7;
-  return sales.filter(s => end - Date.parse(s.date) < span * DAY);
-}
-
+import { dashboard, datedBy, type Range } from '../lib/dashboard';
+import { invGroup } from "../types";
+import Ask from "../components/Ask";
 export default function Home({ data, go, openAdd }: { data: Data; go: (t: string) => void; openAdd: () => void }) {
   const [range, setRange] = useState<Range>("all");
-  const active = useMemo(() => data.listings.filter(l => /active/i.test(l.status)), [data.listings]);
-  const sales = useMemo(() => rangeSales(data.sales, range), [data.sales, range]);
-  const gross = sales.reduce((a, s) => a + s.price, 0), payout = sales.reduce((a, s) => a + net(s), 0), cogs = sales.reduce((a, s) => a + s.cogs, 0);
-  const minDate = sales.reduce((m, s) => (s.date < m ? s.date : m), "9999");
-  const inRange = (d: string) => range === "all" ? true : !!d && d >= minDate;
-  const exp = data.expenses.filter(e => inRange(e.date)).reduce((a, e) => a + e.amount, 0);
-  const miles = data.mileage.filter(t => inRange(t.date)).reduce((a, t) => a + t.miles, 0) * data.settings.mileageRate;
-  const profit = payout - cogs - exp - miles;
-  const snapshot = data.settings.snapshot;
+  const active = useMemo(() => data.listings.filter(l => /^active$/i.test(l.status)), [data.listings]);
+  const asOf = today();
+  const { sales,gross,payout,cogs,exp,miles,profit,hours,fees } = useMemo(() => dashboard(data,range,asOf),[data,range,asOf]);
+  const snapshot = asOf;
   const stale = active.filter(l => days(l.posted, snapshot) >= 21);
-  const months = useMemo(() => { const m: Record<string, { g: number; n: number }> = {}; data.sales.forEach(s => { const k = s.date.slice(0, 7); m[k] = m[k] || { g: 0, n: 0 }; m[k].g += s.price; m[k].n++; }); return Object.keys(m).sort().slice(-6).map(k => ({ label: new Date(k + "-15").toLocaleString("en-US", { month: "short" }), value: m[k].g, n: m[k].n })); }, [data.sales]);
+  const months = useMemo(() => { const m: Record<string, { g: number; n: number }> = Object.create(null); data.sales.forEach(s => { if (!datedBy(s.date, asOf)) return; const k = s.date.slice(0, 7); m[k] = m[k] || { g: 0, n: 0 }; m[k].g += s.price; m[k].n++; }); return Object.keys(m).sort().slice(-6).map(k => ({ label: new Date(k + "-15").toLocaleString("en-US", { month: "short" }), value: m[k].g, n: m[k].n })); }, [data.sales, asOf]);
   const wd = useMemo(() => { const names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]; const c = [0, 0, 0, 0, 0, 0, 0]; sales.forEach(s => { c[(new Date(s.date + "T12:00").getDay() + 6) % 7]++; }); const mx = Math.max(...c); return names.map((l, i) => ({ label: l, value: c[i], hi: c[i] === mx && mx > 0 })); }, [sales]);
-  const hours = data.time.reduce((a, t) => a + t.minutes, 0) / 60;
   const kids = active.filter(l => isKids(l.size)).length;
   const hour = new Date().getHours(); const hello = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
-  const inv = data.inventory, onHand = inv.filter(i => !/sold/i.test(i.status)), unsoldOut = inv.filter(i => /donated|bundled|kept/i.test(i.status)).length;
+  const inv = data.inventory, onHand = inv.filter(i => invGroup(i.status) === "onHand"), unsoldOut = inv.filter(i => invGroup(i.status) === "gone").length;
   const lost = data.issues.reduce((a, i) => a + i.lost, 0);
-  const profitAll = data.sales.reduce((a, s) => a + net(s) - s.cogs, 0) - data.expenses.reduce((a, e) => a + e.amount, 0) - data.mileage.reduce((a, t) => a + t.miles, 0) * data.settings.mileageRate;
+  // Tax set-aside is on all-time profit to date, using the same rule as the totals (future-dated records excluded).
+  const profitAll = useMemo(() => dashboard(data, "all", asOf).profit, [data, asOf]);
   const tax = sales.reduce((a, s) => a + (s.tax || 0), 0);
   const byPlat = useMemo(() => { const m: Record<string, number> = {}; sales.forEach(s => { const k = s.platform || "Depop"; m[k] = (m[k] || 0) + s.price; }); return Object.entries(m).sort((a, b) => b[1] - a[1]).map(([label, value]) => ({ label, value })); }, [sales]);
 
@@ -41,14 +31,14 @@ export default function Home({ data, go, openAdd }: { data: Data; go: (t: string
   if (!hours) todo.push({ ic: I.clock, t: "No time logged yet", d: "Tap + and log a few sessions. Profit per hour is the number that matters most.", go: "add" });
 
   return <>
-    <div className="greeting"><img src="/logo.png" alt="Threads and Things" style={{ background: "var(--logo-bg)", borderRadius: 12, padding: "var(--logo-pad)" }} /><div className="g"><h1>{hello}, {data.settings.name}</h1><p className="sub">Here's how the shop is doing.</p></div></div>
+    <div className="greeting"><div className="g"><p className="hello-tag">{hello}</p><h1>Hi {data.settings.name} <span className="heart" aria-hidden="true">{I.heart}</span></h1><p className="sub">Here's how your shop is doing.</p></div></div>
     <div style={{ marginTop: 12 }}><Chips value={range} onChange={setRange} label="Time range" options={[["all", "All time"], ["30", "Last 30 days"], ["7", "Last 7 days"]]} /></div>
     <div className="kpis" style={{ marginTop: 6 }}>
       <Kpi hero tip="profit" label="Net profit" value={money(profit)} detail={`${sales.length} items · after fees${exp ? `, ${money(exp, 0)} expenses` : ""}${miles ? ", mileage" : ""}`} />
       <Kpi tip="sold" label="Items sold" value={sales.length} />
       <Kpi tip="avg" label="Average sale" value={money(sales.length ? gross / sales.length : 0)} />
       <Kpi tip="payout" label="Payout per item" value={money(sales.length ? payout / sales.length : 0)} />
-      <Kpi tip="fees" label="Fees take" value={pct(gross ? (gross - payout) / gross : 0)} />
+      <Kpi tip="fees" label="Fees take" value={pct(gross ? fees / gross : 0)} />
     </div>
 
     <h2>To do this week</h2>
@@ -64,10 +54,12 @@ export default function Home({ data, go, openAdd }: { data: Data; go: (t: string
       <button type="button" onClick={() => go("more")}>{I.more}Import</button>
     </div>
 
+    <Ask data={data} />
+
     <h2>Sales by month</h2>
-    <div className="card" style={{ marginTop: 0 }}>{months.length ? <><Bars data={months} fmt={n => money(n, 0)} /><p className="note" style={{ margin: "4px 0 0" }}>{months.map(m => `${m.label}: ${m.n} sold`).join(" · ")}</p></> : <div className="empty"><b>No sales yet</b>Log your first sale with the + button.</div>}</div>
+    <div className="card" style={{ marginTop: 0 }}>{months.length ? <><Bars data={months} fmt={n => money(n, 0)} title="Sales by month" /><p className="note" style={{ margin: "4px 0 0" }}>{months.map(m => `${m.label}: ${m.n} sold`).join(" · ")}</p></> : <div className="empty"><b>No sales yet</b>Log your first sale with the + button.</div>}</div>
     <h2>Best days to sell</h2>
-    <div className="card" style={{ marginTop: 0 }}><Bars data={wd} fmt={n => String(n)} height={150} /></div>
+    <div className="card" style={{ marginTop: 0 }}><Bars data={wd} fmt={n => String(n)} height={150} title="Items sold by day of week" /></div>
 
     <h2>On the rack</h2>
     <div className="kpis" style={{ marginTop: 0 }}>
@@ -81,7 +73,7 @@ export default function Home({ data, go, openAdd }: { data: Data; go: (t: string
     {!inv.length && !data.time.length && !data.issues.length && <p className="note" style={{ margin: "0 0 8px" }}>Add inventory, time and issues with the + button and these light up.</p>}
     <div className="kpis" style={{ marginTop: 0 }}>
       <Kpi tip="hours" label="Hours logged" value={hours ? hours.toFixed(1) : "–"} />
-      <Kpi tip="perhour" label="Profit per hour" value={hours ? money((payout - cogs) / hours) : "–"} />
+      <Kpi tip="perhour" label="Profit per hour" value={hours ? money(profit / hours) : "–"} />
       <Kpi tip="onhand" label="Items on hand" value={inv.length ? onHand.length : "–"} />
       <Kpi tip="cash" label="Cash in inventory" value={inv.length ? money(onHand.reduce((a, i) => a + i.cost, 0), 0) : "–"} />
       <Kpi tip="unsold" label="Left unsold" value={inv.length ? unsoldOut : "–"} />

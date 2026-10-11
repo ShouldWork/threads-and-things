@@ -2,20 +2,20 @@ import { useEffect, useMemo, useState } from "react";
 import type { Data } from "../types";
 import { money, pct, today } from "../lib/calc";
 import { monthly, runRate, forecast, goalPlan, monthLabel, BASIS_LABEL, type Basis } from "../lib/projections";
-import { Kpi, Chips, Bars, Tip } from "../components/ui";
+import { Kpi, Chips, Bars, Tip, Field } from "../components/ui";
 import { saveSettings } from "../hooks/useData";
 
-export default function Plan({ data, setCrumb, toast }: { data: Data; setCrumb: (s: string) => void; toast: (s: string) => void }) {
+export default function Plan({ data, toast }: { data: Data; toast: (s: string) => void }) {
+  const [saveError,setSaveError] = useState("");
+  const [saving,setSaving] = useState(false);
   const [basis, setBasis] = useState<Basis>("30");
-  const asOf = today();
-  useEffect(() => { setCrumb(BASIS_LABEL[basis]); }, [basis, setCrumb]);
-  const rr = useMemo(() => runRate(data, basis, asOf), [data, basis, asOf]);
+  const asOf = today();  const rr = useMemo(() => runRate(data, basis, asOf), [data, basis, asOf]);
   const f = useMemo(() => forecast(data, rr, asOf), [data, rr, asOf]);
   const months = useMemo(() => monthly(data, asOf), [data, asOf]);
   const [goal, setGoal] = useState(String(data.settings.goalMonthly || ""));
   useEffect(() => { setGoal(String(data.settings.goalMonthly || "")); }, [data.settings.goalMonthly]);
   const target = data.settings.goalMonthly;
-  const g = useMemo(() => (target > 0 ? goalPlan(data, rr, target) : null), [data, rr, target]);
+  const g = useMemo(() => (target > 0 ? goalPlan(data, rr, target, asOf) : null), [data, rr, target, asOf]);
   const basisNote = `${rr.sold} sales over ${rr.days} days (${rr.from} to ${rr.to})`;
   const last6 = months.slice(-6);
 
@@ -45,31 +45,33 @@ export default function Plan({ data, setCrumb, toast }: { data: Data; setCrumb: 
     <div className="card" style={{ marginTop: 0 }}>
       <div className="form" style={{ marginTop: 0 }}>
         <div className="grid2" style={{ alignItems: "end" }}>
-          <div className="field"><label>Profit target per month</label><input type="number" inputMode="decimal" step="10" min={0} value={goal} onChange={e => setGoal(e.target.value)} placeholder="300" /></div>
-          <button type="button" className="btn primary" onClick={async () => { const v = Math.max(0, parseFloat(goal) || 0); await saveSettings({ goalMonthly: v }); toast(v ? "Goal saved." : "Goal cleared."); }}>Save goal</button>
+          <Field label="Profit target per month"><input type="number" inputMode="decimal" step="10" min={0} value={goal} onChange={e => setGoal(e.target.value)} placeholder="300" /></Field>
+          <button type="button" className="btn primary" disabled={saving} onClick={async () => { if(saving)return;setSaving(true);setSaveError("");try{const v=Number(goal || 0);const result=await saveSettings({goalMonthly:v});toast(result.queued?"Goal saved on this device; will sync.":v?"Goal saved.":"Goal cleared.");}catch(e){setSaveError((e as Error).message);}finally{setSaving(false);} }}>Save goal</button>
         </div>
       </div>
+      {saveError && <p className="err" role="alert">{saveError}</p>}
       {!g && <p className="note" style={{ margin: "10px 0 0" }}>Set a monthly profit target and this works out how many sales, listings, dollars of inventory and hours it takes at your current numbers.</p>}
       {g && <>
         <div className={"insight " + (g.onTrack ? "good" : "")} style={{ marginBottom: 0 }}>
           <b>{g.onTrack ? `On pace: ${money(g.currentMonthly)} a month against ${money(g.target)}` : `${money(g.gap)} a month short of ${money(g.target)}`}</b>
           {g.onTrack ? "Keep listing at this rate. Watch the thin-sample warning if it appears." : `Current pace is ${money(g.currentMonthly)} a month after about ${money(g.overheadMonthly)} of costs.`}
         </div>
+        {!g.reachable && <div className="insight bad" style={{ marginBottom: 0 }}><b>Not reachable at the current profit per sale</b>Each sale in this window makes {money(g.avgProfit)} after fees and item cost, so more sales alone won't reach the goal. Raise prices or lower what you pay for items first.</div>}
         <table style={{ marginTop: 8 }}><tbody>
-          <tr><td>Sales needed per month</td><td>{g.salesNeeded}</td></tr>
-          <tr><td>That is per week</td><td>{g.perWeek}</td></tr>
+          {g.reachable && <><tr><td>Sales needed per month</td><td>{g.salesNeeded}</td></tr>
+          <tr><td>That is per week</td><td>{g.perWeek}</td></tr></>}
           <tr><td>Profit per sale (basis)</td><td>{money(g.avgProfit)}</td></tr>
-          <tr><td>Listings to have up, at {pct(g.sellThrough)} sell-through</td><td>{g.listingsNeeded ?? "–"}</td></tr>
-          <tr><td>Cash into inventory for those listings</td><td>{g.cashNeeded == null ? "–" : money(g.cashNeeded)}</td></tr>
+          {g.reachable && <><tr><td>Listings to have up, at {pct(g.sellThrough)} sell-through</td><td>{g.listingsNeeded ?? "–"}</td></tr>
+          <tr><td>Cash into inventory for those listings</td><td>{g.cashNeeded == null ? "–" : money(g.cashNeeded)}</td></tr></>}
           <tr><td>Hours per month, at {g.profitPerHour == null ? "no time logged" : money(g.profitPerHour) + "/hour"}</td><td>{g.hoursNeeded ?? "–"}</td></tr>
         </tbody></table>
-        {g.cashNeeded === 0 && g.listingsNeeded != null && <p className="note" style={{ margin: "8px 0 0" }}>Cash shows $0 because sales in this window have no item cost logged. Add costs on inventory items and it fills in.</p>}
+        {g.reachable && g.cashNeeded === 0 && rr.avgCogs === 0 && <p className="note" style={{ margin: "8px 0 0" }}>Cash shows $0 because sales in this window have no item cost logged. Enter the item cost on each sale. When you log a sale with the item's SKU from inventory, its cost is copied in automatically.</p>}
       </>}
     </div>
 
     <h2>Profit by month</h2>
     <div className="card" style={{ marginTop: 0 }}>
-      {last6.some(m => m.sold) ? <Bars data={last6.map(m => ({ label: monthLabel(m.month), value: m.profit }))} fmt={n => money(n, 0)} /> : <div className="empty"><b>No months yet</b>Log a sale and this fills in.</div>}
+      {last6.some(m => m.sold) ? <Bars data={last6.map(m => ({ label: monthLabel(m.month), value: m.profit }))} fmt={n => money(n, 0)} title="Profit by month" /> : <div className="empty"><b>No months yet</b>Log a sale and this fills in.</div>}
     </div>
     <div className="card scroll"><Tip k="pl" /><h3>Month by month</h3>
       <table><thead><tr><th>Month</th><th>Sold</th><th>Listed</th><th>Gross</th><th>Fees</th><th>Payout</th><th>Cost of items</th><th>Costs</th><th>Profit</th><th>Margin</th></tr></thead>

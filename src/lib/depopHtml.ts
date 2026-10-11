@@ -15,5 +15,5 @@ export function parseDepopListingsHtml(html: string, shopStart: string): Listing
     if (dt) { const d = Date.parse(dt[2]); if (dt[1] === "Listed") { posted = new Date(d).toISOString().slice(0, 10); exact = true; } else { posted = new Date(start + (d - start) / 2).toISOString().slice(0, 10); } }
     out.push({ cat: cat ? dec(cat[1]) : "", size: size ? dec(size[1]) : "", desc: label.includes(" - ") ? label.split(" - ").slice(1).join(" - ") : label, orig: prices.length > 1 ? prices[0] : null, price: prices.length ? prices[prices.length - 1] : 0, posted, exact, boosted: li.includes("boostViewsText"), link: `https://www.depop.com/products/${slug[1]}/`, status: "Active" });
   }
-  return out;
+  return out.map(row=>({...row,sourceData:JSON.stringify(Object.fromEntries(Object.entries(row).filter(([key])=>row.exact || !['posted','exact'].includes(key))))}));
 }

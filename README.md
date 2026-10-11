@@ -1,77 +1,87 @@
 # Threads and Things
 
-Sierra's reseller dashboard. React + TypeScript + Vite on the front, Firebase Auth (Google sign-in with a users list) and Firestore behind it, deployed to Firebase Hosting. Works as a phone web app (add to home screen) and keeps working offline until the connection returns.
+Sierra's reseller dashboard: React, TypeScript, Vite, Firebase Google authentication, Firestore, and Firebase Hosting. A previously cached production app can reopen offline, and record changes queue locally until Firestore synchronizes them.
 
-## What it does
+## Features
 
-- Home: net profit, items sold, average sale, fees, to-do list built from her data, sales by month, best days, on-the-rack summary, behind-the-scenes numbers (hours, profit per hour, inventory, tax set-aside).
-- Sales: every sale, searchable, tap to edit.
-- Closet: active Depop listings (with age tags) and the inventory log.
-- Plan: projections. Profit for the next 30 and 90 days and year end from a run rate (last 30 days, last 90 days, or since the start), what the current rack should pay out and how long it lasts, a monthly profit target turned into sales, listings, inventory cash and hours needed, and a month-by-month profit and loss table.
-- Learn: insights computed from her numbers, plus the seller playbook.
-- More: imports (Depop sales export, saved Depop listings page, the old tracker spreadsheet), settings, CSV download, sign out.
-- The + button logs a sale, inventory item, expense, time, mileage, issue, or listing. Logging a sale against a SKU marks that inventory item sold and pulls in its cost.
+- Home: profit, sales, fees, current listings, hours, inventory, and tax set-aside. Recent windows end today; sales, costs, and hours share the same range.
+- Sales and Closet: searchable records with editing and pagination through all loaded entries.
+- Plan: sales run rates, profit projections, inventory estimates, monthly goals, and monthly profit/loss.
+- Learn: insights from the shop's records and the seller playbook.
+- More: review imports and uncertain sale matches, edit logs, inspect import history, undo recent operations, review duplicate sales, download/restore full backups, clear imported sales, and reset shop records.
+- The + button adds any record type. Saving a sale against an inventory SKU marks the item sold in the same atomic batch. Changing its SKU or deleting the sale restores the prior item's status.
 
-## How the data is laid out
+See [REVIEW_FIXES.md](REVIEW_FIXES.md) for the review findings, fixes, validation results, and deployment notes.
+See [IMPORT_WORKFLOW.md](IMPORT_WORKFLOW.md) for repeat CSV imports, preserving edits, and recovery controls.
 
+## Development
+
+Use Node **22.12 or newer**; GitHub Actions uses Node 24. Firestore emulator tests require **Java 21** and Firebase CLI 15.33.0. On Windows, use `npm.cmd`/`npx.cmd` if PowerShell blocks their script wrappers.
+
+```sh
+npm ci
+npm run dev:mock                 # in-memory seed data; no Firebase backend; Ask AI gives canned demo answers
+# PowerShell: $env:LIVE_AI='1'; npm run dev:mock   # demo data, but Ask AI calls the real Gemini free tier (uses the shop's allowance)
+npm run dev                      # real Firebase project; requires .env
+npm run check                    # unit/component/hook tests, TypeScript, production build
+npm audit --audit-level=moderate
+npm install --global firebase-tools@15.33.0
+firebase emulators:exec --only firestore --project demo-threads-and-things "npm run test:rules"
+npx playwright install chromium
+npm run test:browser              # run after the production build
+npm run build:preview             # demo preview build; overwrites dist
 ```
-users/{email}                       { role: "owner", shops: ["sierra"] }   who may sign in, which shop they see
-shops/{shopId}                      settings: name, mileageRate, taxPct, snapshot, shopStart, goalMonthly
-shops/{shopId}/sales/{id}
-shops/{shopId}/listings/{id}
-shops/{shopId}/inventory/{id}
-shops/{shopId}/expenses/{id}
-shops/{shopId}/mileage/{id}
-shops/{shopId}/time/{id}
-shops/{shopId}/issues/{id}
+
+`npm test` excludes emulator tests. The browser suite uses the demo app for CRUD and the production build for offline app-shell reload. `npm run build:preview` aliases Firebase, data access and the AI to in-memory mocks. Changes in a demo tab disappear when it reloads.
+
+For local interactive emulator development, run `npm run emulators`, then `npm run dev:emu` in another terminal. `.env.emulator` uses the local `demo-threads-and-things` project, avoiding production services.
+
+## Firebase setup
+
+1. In project `threads-and-things-e0943`, enable Google authentication and create Firestore in production mode.
+2. Copy the web Firebase configuration into `.env` using `.env.example`. `.env.production` supplies the production build identifiers. Missing configuration displays a setup message. These identifiers are [Firebase project configuration, not server credentials](https://firebase.google.com/docs/projects/api-keys).
+3. Administratively create `users/{lowercaseGoogleEmail}` with `role: "owner"` and `shops: ["sierra"]`. Add each authorized person separately. Verified members can read their listed shops; only `owner` and `editor` roles can write. The app cannot change membership documents.
+4. Create the shop settings document, then deploy the matching rules and app when ready. Existing legacy documents are supported; imports activate a versioned dataset.
+
+```text
+users/{email}                                  role, shops
+shops/{shopId}                                 settings, revision, lastWrite, dataVersion
+shops/{shopId}/{collection}/{id}                legacy records
+shops/{shopId}/datasets/{version}/{collection}/{id}  versioned records
+shops/{shopId}/history/{operationId}            import/recovery history
 ```
 
-Field names match `src/types.ts`. A person opens the first shop on their `users` document. A second shop (another seller, another platform account, a test shop) is a new `shops/{id}` document and a second entry in that array; nothing else changes. The rules in `firestore.rules` let a person read only their own `users` document and read or write only the shops listed on it. Nothing in the app can write to `users`.
+Collections: `sales`, `listings`, `inventory`, `expenses`, `mileage`, `time`, `issues`. Record shapes are in `src/types.ts`; validation and defaults are in `src/lib/records.ts`. The first listed shop is opened. Optional `dataVersion` selects the active dataset; absent/empty selects legacy collections. Rules reject writes to retired datasets.
 
-## One-time setup
+## Imports and offline use
 
-1. Firebase console (https://console.firebase.google.com), project `threads-and-things-e0943`:
-   - Build > Authentication > Sign-in method > Google > Enable.
-   - Build > Firestore Database > Create database > production mode > a US region.
-   - Project settings > Your apps > Web > copy the `firebaseConfig` values into `.env` (see `.env.example`) for local `npm run dev`. The same values are committed in `.env.production` so that `npm run build` works on GitHub Actions; Firebase documents these as identifiers, not secrets (https://firebase.google.com/docs/projects/api-keys). `.firebaserc` already names the project.
+More accepts Depop sales exports, saved Depop Active listings pages, and tracker spreadsheets. Imports update matching records and add new records; rows missing from a file remain saved. Match sales by native transaction/product ID where available, inventory by SKU, and listings by product ID/link. Review new, updated, unchanged, and skipped counts, and resolve uncertain sale matches before confirming. Identical sales without IDs cannot always be distinguished.
 
-2. Let Sierra and yourself in. In Firestore, Start collection `users`:
-   - Document ID = her Google email, all lowercase. Fields: `role` (string) `owner`, `shops` (array) `sierra`.
-   - A second document for your own email, same fields.
-   - Nobody else can read or write anything, even if they find the URL and sign in.
+Imported records store their source values separately from protected app edits. Columns absent from an export cannot clear existing values. Inventory notes and costs already maintained in the app are preserved. Form edits are protected by default; “Use latest imported values” releases protection. Legacy nonempty inventory/local sale details are protected when first matched.
 
-3. Install, test, run locally, deploy
-   ```
-   npm install
-   npm test                                     # unit tests for the math (calc, projections)
-   npm run dev:mock                             # the UI on seed data, no Firebase: http://localhost:5173
-   npm run dev                                  # against the real project (needs .env)
-   npm install -g firebase-tools
-   firebase login
-   npm run deploy:rules                         # publishes firestore.rules
-   npm run deploy                               # builds and publishes to Firebase Hosting
-   ```
-   The deploy prints the URL (`https://threads-and-things-e0943.web.app`). On her phone: open it in Safari or Chrome, Share, Add to Home Screen.
+An import validates the file, computes record updates, stages a complete new dataset without deleting live records, and activates it with a history entry in a transaction only if the shop revision is unchanged. Internal record IDs stay stable. A failed upload or concurrent edit leaves current data active. Each operation copies the whole dataset for atomic publication; retained snapshots consume storage and need deliberate administrative cleanup as they accumulate.
 
-   GitHub Actions also deploys: every push to `main` builds and publishes to the live site, and every pull request gets a preview URL (`.github/workflows/`, created by `firebase init hosting:github`). The service account key lives in the repo's GitHub secrets.
+More has separate owner controls for clearing imported/unclassified sales, resetting all records, and restoring a full JSON backup. Clear imported sales keeps explicitly tagged manual sales and all inventory/notes, including physical sold statuses. Older unclassified sales are included in the clear count because their original source is unknown. Reset keeps settings, account access and recovery history. Both require a typed confirmation and retain the previous dataset. Undo restores into a fresh version and is blocked after later edits; downloading/restoring a full backup supports deliberate recovery after later changes.
 
-4. Bring her data over
-   - More > Import the tracker spreadsheet, choose `Sierra_Depop_Tracker.xlsx`. The tracker's Sales, Active Listings, Expenses and Mileage tabs load. Buyer shipping is read from the Sales tab.
-   - From then on she adds things with the + button, and imports a Depop sales export whenever she likes (duplicates are skipped).
+Ordinary forms can save offline after the shop is cached. A queued message means accepted on this device, not confirmed by the server; the header shows pending changes and later failures appear as alerts. Imports require connectivity and synced pending changes. Sign out after synchronization. Offline records remain in browser storage, so use trusted devices. First-time authentication requires connectivity.
 
-## Day to day
+## Deployment
 
-- Something sold: + > Sale. Type the SKU if the item is in inventory. Tap "Estimate Depop fees" and the fee math is done.
-- Something new came in: + > Inventory item. Write the SKU on the tag.
-- Time, gas, supplies, problems: + > Time / Mileage / Expense / Issue.
-- Refresh the listings list every week or two: on a computer, Depop Selling hub > Active, click Load more until it is gone, save the page (Ctrl+S, "Webpage, Complete"), then More > Import your Depop listings page.
-- Set a monthly profit goal on the Plan tab and it tells her what that takes.
+```sh
+firebase login
+npm run deploy                   # validates, builds, deploys Firestore and Hosting
+```
 
-## Development notes
+Before publishing, run the emulator/browser checks above as well. The local deploy command runs unit tests and the production build; GitHub Actions additionally runs audit, emulator, and browser checks.
 
-- `src/lib/` is pure math and parsing with no React or Firebase (`calc.ts`, `projections.ts`, `parse.ts`, `depopHtml.ts`). Tests in `test/*.test.ts` cover `calc` and `projections`.
-- `src/hooks/useData.ts` is the only file that talks to Firestore. Pages and forms go through its `add`, `update`, `remove`, `addMany`, `replaceAll`, `saveSettings`.
-- `npm run dev:mock` swaps `firebase.ts` and `useData.ts` for in-memory mocks (`test/*.mock.ts`) seeded from `test/seed.json`.
-- `npm run emulators` then `npm run dev:emu` runs against local Firebase emulators (needs Java for the Firestore emulator).
-- Net payout treats buyer-paid shipping as pass-through to the Depop label (payout = price minus fees minus any label cost you paid yourself minus refunds plus fees refunded). Shipping is stored on each sale but not added to payout. If Sierra buys her own labels, enter the label cost on the sale.
-- Costs: Firebase's free tier covers this comfortably (one or two users, a few thousand documents).
+Pushing `main` triggers validation and deployment of Firestore rules/indexes plus Hosting. The service account secret `FIREBASE_SERVICE_ACCOUNT_THREADS_AND_THINGS_E0943` needs both Firestore deployment and Hosting permissions. Same-repository PRs receive demo Hosting previews after validation; fork PRs validate without deployment secrets. Preview builds have no live Firebase backend.
+
+Release the matching rules and app together; older cached app versions cannot perform writes that satisfy the new revision rules. Close old tabs and reopen after rollout. Service worker updates wait for old tabs to close rather than reloading open forms.
+
+## Implementation notes
+
+- `src/firebase.ts` initializes authentication; `src/firestore.ts` initializes persistent Firestore caching when the signed-in shop loads.
+- `src/hooks/useData.ts` owns subscriptions, validated CRUD, atomic sale writes, local queue acknowledgement, and staged imports. Pages use `add`, `update`, `remove`, `saveSale`, `saveSettings`, and `importData`. Updates supply a complete validated record.
+- `src/lib/` contains math, dashboard bounds, import matching, parsing, validation, and sale/inventory planning. Tests cover these helpers and the important failure paths.
+- Pages and spreadsheet parsing load lazily. The production service worker caches the complete app for offline reopening; total cached download size is larger than the initial critical JavaScript bundle.
+- Buyer-paid shipping is treated as pass-through. Payout subtracts selling/payment/boost fees, seller-paid label cost, and refunds, adding refunded fees. Record seller-paid labels on the sale.
