@@ -122,10 +122,10 @@ test('Log sale keeps an unsaved bin, saves the sale and links it to the listing'
   await expect(page.locator('.rowbtn',{hasText:desc.slice(0,20)}).first().locator('.pill.spot')).toHaveText('Bin 9');
 });
 
-test('Sales can be narrowed to Today, This month or All sales, and future-dated sales stay out',async({page})=>{
+test('Sales can be narrowed to Today, This week, This month or All sales, and future-dated sales stay out',async({page})=>{
   await page.goto('http://127.0.0.1:5173');
-  const [today,tomorrow,lastMonth]=await page.evaluate(()=>{const f=(d:Date)=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;const n=new Date();return [f(n),f(new Date(n.getFullYear(),n.getMonth(),n.getDate()+1)),f(new Date(n.getFullYear(),n.getMonth()-1,1))];});
-  for(const [desc,price,date] of [['Sold today tee','12',today],['Future dated tee','99',tomorrow],['Last month tee','7',lastMonth]]){
+  const [today,tomorrow,lastMonth,monday,sundayBefore]=await page.evaluate(()=>{const f=(d:Date)=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;const n=new Date();const back=(n.getDay()+6)%7;return [f(n),f(new Date(n.getFullYear(),n.getMonth(),n.getDate()+1)),f(new Date(n.getFullYear(),n.getMonth()-1,1)),f(new Date(n.getFullYear(),n.getMonth(),n.getDate()-back)),f(new Date(n.getFullYear(),n.getMonth(),n.getDate()-back-1))];});
+  for(const [desc,price,date] of [['Sold today tee','12',today],['Future dated tee','99',tomorrow],['Last month tee','7',lastMonth],['Monday tee','5',monday],['Sunday before tee','3',sundayBefore]]){
     await page.locator('.quick').getByRole('button',{name:'Log a sale'}).click();
     const dlg=page.getByRole('dialog');
     await dlg.getByLabel('Date sold').fill(date);await dlg.getByLabel('Description').fill(desc);await dlg.getByLabel('Item price').fill(price);
@@ -136,11 +136,17 @@ test('Sales can be narrowed to Today, This month or All sales, and future-dated 
   const gross=page.locator('.kpi',{hasText:'Gross'}).locator('.v');
   await period.getByRole('button',{name:'Today'}).click();
   await expect(period.getByRole('button',{name:'Today'})).toHaveAttribute('aria-pressed','true');
-  await expect(rows).toHaveCount(1);await expect(rows.first()).toContainText('Sold today tee');await expect(gross).toHaveText('$12');
+  // On a Monday the Monday tee is also today's sale.
+  const todayIsMonday=today===monday;
+  await expect(rows).toHaveCount(todayIsMonday?2:1);await expect(rows.filter({hasText:'Sold today tee'})).toHaveCount(1);await expect(gross).toHaveText(todayIsMonday?'$17':'$12');
+  await period.getByRole('button',{name:'This week'}).click();
+  await expect(period.getByRole('button',{name:'This week'})).toHaveAttribute('aria-pressed','true');
+  await expect(rows.filter({hasText:'Sold today tee'})).toHaveCount(1);await expect(rows.filter({hasText:'Monday tee'})).toHaveCount(1);
+  await expect(rows.filter({hasText:'Sunday before tee'})).toHaveCount(0);await expect(rows.filter({hasText:'Future dated tee'})).toHaveCount(0);
   await period.getByRole('button',{name:'This month'}).click();
   await expect(rows.filter({hasText:'Sold today tee'})).toHaveCount(1);
   await expect(rows.filter({hasText:'Last month tee'})).toHaveCount(0);await expect(rows.filter({hasText:'Future dated tee'})).toHaveCount(0);
-  await period.getByRole('button',{name:'All sales'}).click();
+  await period.getByRole('button',{name:'All',exact:true}).click();
   await page.getByLabel('Search sales').fill('tee');
   await expect(rows.filter({hasText:'Last month tee'})).toHaveCount(1);await expect(rows.filter({hasText:'Sold today tee'})).toHaveCount(1);
   await expect(rows.filter({hasText:'Future dated tee'})).toHaveCount(0);  // same rule as Home and the AI
@@ -177,9 +183,10 @@ test('a listing set to Removed can be found and put back on the rack',async({pag
 test('Closet filters sit in one row and open a pop-up with the choices',async({page})=>{
   await page.goto('http://127.0.0.1:5173');await go(page,'Closet');
   const pickers=page.locator('.pickers .picker');
-  await expect(pickers.nth(2)).toBeVisible(); // .all() does not wait for the page to render
+  await expect(pickers.nth(1)).toBeVisible(); // .all() does not wait for the page to render
   const boxes=await Promise.all((await pickers.all()).map(p=>p.boundingBox()));
-  expect(boxes.length).toBeGreaterThanOrEqual(3);
+  expect(boxes.length).toBeGreaterThanOrEqual(2);
+  await expect(page.getByRole('button',{name:/^Size:/})).toHaveCount(0); // Size filter was removed on request
   expect(Math.max(...boxes.map(b=>b!.y))-Math.min(...boxes.map(b=>b!.y))).toBeLessThanOrEqual(2); // one row
   await expect(page.getByRole('button',{name:'Listing age: Any age'})).toBeVisible();
   await page.getByRole('button',{name:'Listing age: Any age'}).click();

@@ -11,7 +11,7 @@ type View = "listings" | "sold" | "removed" | "inventory";
 export default function Closet({ data, onEditItem, onEditListing }: { data: Data; onEditItem: (i: Item) => void; onEditListing: (l: Listing) => void }) {
   const [view, setView] = useState<View>("listings");
   const [limit,setLimit] = useState(100);
-  const [q, setQ] = useState(""); const [cat, setCat] = useState("All"); const [loc, setLoc] = useState(""); const [age, setAge] = useState("all"); const [kids, setKids] = useState("all"); const [sort, setSort] = useState("old"); const [status, setStatus] = useState("open");
+  const [q, setQ] = useState(""); const [cat, setCat] = useState("All"); const [loc, setLoc] = useState(""); const [age, setAge] = useState("all"); const [sort, setSort] = useState("old"); const [status, setStatus] = useState("open");
   const active = useMemo(() => data.listings.filter(isActiveListing), [data.listings]);
   // Sold and removed listings stay findable (with their bin) instead of disappearing.
   const sold = useMemo(() => data.listings.filter(isSoldListing), [data.listings]);
@@ -31,10 +31,9 @@ export default function Closet({ data, onEditItem, onEditListing }: { data: Data
     if (cat !== "All") l = l.filter(x => x.cat === cat); if (q) l = l.filter(x => (x.desc + " " + x.size + " " + (x.location || "")).toLowerCase().includes(q.toLowerCase()));
     l = l.filter(atSpot);
     if (age === "21") l = l.filter(x => x.age >= 21); if (age === "new") l = l.filter(x => x.age < 7);
-    if (kids === "kids") l = l.filter(x => isKids(x.size)); if (kids === "adult") l = l.filter(x => !isKids(x.size));
     const s: Record<string, (a: typeof l[0], b: typeof l[0]) => number> = { old: (a, b) => b.age - a.age, new: (a, b) => a.age - b.age, hi: (a, b) => b.price - a.price, lo: (a, b) => a.price - b.price };
     return l.sort(s[sort]);
-  }, [source, q, cat, loc, age, kids, sort, snapshot]);
+  }, [source, q, cat, loc, age, sort, snapshot]);
 
   const items = useMemo(() => {
     let l = data.inventory.slice();
@@ -49,10 +48,9 @@ export default function Closet({ data, onEditItem, onEditListing }: { data: Data
     <div className="controls">
       {/* One row of filter buttons; each opens a pop-up of choices instead of showing every option on the page. */}
       <div className="pickers">
-        <FilterPicker short="Status" title="Status" value={view} onChange={v => { setView(v); setCat("All"); setLoc(""); setAge("all"); setKids("all"); }}
+        <FilterPicker short="Status" title="Status" value={view} onChange={v => { setView(v); setCat("All"); setLoc(""); setAge("all"); }}
           options={[["listings", `On Depop (${active.length})`], ["sold", `Sold (${sold.length})`], ["removed", `Removed (${removed.length})`], ["inventory", `Inventory (${data.inventory.length})`]]} />
         {view === "listings" && <FilterPicker short="Age" title="Listing age" value={age} onChange={setAge} options={[["all", "Any age"], ["21", "Sitting 21+ days"], ["new", "New this week"]]} />}
-        {view === "listings" && <FilterPicker short="Size" title="Size" value={kids} onChange={setKids} options={[["all", "All sizes"], ["adult", "Adult"], ["kids", "Kids"]]} />}
         {spots.length > 0 && <FilterPicker short="Spot" title="Where it's stored" value={loc} onChange={setLoc} options={[["", "Anywhere"], ...spots.map(s => [s, s] as [string, string]), ...(hasUnplaced ? [[NO_SPOT, "No spot yet"] as [string, string]] : [])]} />}
       </div>
       <input id="c-q" type="search" placeholder={isListingView ? "Search, e.g. flare, size M, bin 1" : "Search description, SKU, brand, spot"} value={q} onChange={e => setQ(e.target.value)} aria-label="Search" />
