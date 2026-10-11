@@ -1,0 +1,25 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Who can get in: one document per person in "users", document ID = their Google email (lowercase).
+    //   users/sierra@gmail.com  { role: "owner", shops: ["sierra"] }
+    // Which shop they can see: the "shops" array on that document.
+    // Managed in the Firebase console only. Nothing in the app can write to "users".
+    function signedIn() { return request.auth != null && request.auth.token.email != null; }
+    function me() { return /databases/$(database)/documents/users/$(request.auth.token.email.lower()); }
+    function member(shopId) { return signedIn() && exists(me()) && (shopId in get(me()).data.shops); }
+
+    match /users/{email} {
+      allow read: if signedIn() && request.auth.token.email.lower() == email;
+      allow write: if false;
+    }
+
+    // shops/{shopId} holds the shop's settings. Everything else lives in subcollections under it.
+    match /shops/{shopId} {
+      allow read, write: if member(shopId);
+      match /{document=**} {
+        allow read, write: if member(shopId);
+      }
+    }
+  }
+}

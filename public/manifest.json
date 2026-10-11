@@ -1,0 +1,2 @@
+{ "name": "Threads and Things", "short_name": "Threads", "start_url": "/", "display": "standalone", "background_color": "#fbf4f2", "theme_color": "#d4607a",
+  "icons": [{ "src": "/icon.png", "sizes": "400x324", "type": "image/png" }] }
