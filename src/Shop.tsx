@@ -1,4 +1,5 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { askStore, resetAsk } from "./lib/askStore";
 import type { User } from "firebase/auth";
 import { demo, logout } from "./firebase";
 import { useData } from "./hooks/useData";
@@ -24,6 +25,16 @@ export default function Shop({user}: {user: User}) {
   useEffect(() => { const on = () => setOnline(true), off = () => setOnline(false); addEventListener("online", on); addEventListener("offline", off); return () => { removeEventListener("online", on); removeEventListener("offline", off); }; }, []);
 
   useEffect(() => { setSheet(null); }, [user?.email]);
+  // Ask AI keeps running across tabs; tell her when an answer lands while she's elsewhere. Clear it when this shop closes.
+  const tabRef = useRef(tab); tabRef.current = tab;
+  useEffect(() => {
+    let seen = askStore.get().finished;
+    const off = askStore.subscribe(() => {
+      const s = askStore.get();
+      if (s.finished !== seen) { seen = s.finished; if (tabRef.current !== "home") toast(s.err ? "Your AI question didn't go through. See Home." : "Your AI answer is ready on Home."); }
+    });
+    return () => { off(); resetAsk(); };
+  }, [toast]);
 
   if (error) return <div className="wrap"><div className="login"><img src="/icon.png" alt="Threads and Things" /><h1>Could not open your shop</h1><p className="sub">{error}<br />Signed in as {user.email}. Ask Blake to add this email to the users list, then reload.</p><button type="button" className="btn" onClick={() => logout().catch(e => toast(e.message))}>Sign out</button></div></div>;
   if (!ready) return <div className="wrap"><p className="note" style={{ paddingTop: 20 }}>Loading your shop…</p></div>;

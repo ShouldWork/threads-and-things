@@ -13,6 +13,25 @@ test('Ask AI answers from the summary and shows an honest error',async({page})=>
   await expect(page.locator('.answer .err')).toHaveText(/on its end/);
 });
 
+test('an AI question keeps going when she switches tabs, and the answer is waiting on Home',async({page})=>{
+  await page.goto('http://127.0.0.1:5173');
+  await page.getByLabel('Your question').fill('slow demo');await page.getByRole('button',{name:'Ask',exact:true}).click();
+  await expect(page.locator('.thinking')).toBeVisible();
+  await go(page,'Sales');await expect(page.getByRole('heading',{name:'Sales',exact:true})).toBeVisible();
+  await expect(page.locator('.toast')).toHaveText('Your AI answer is ready on Home.',{timeout:8000});
+  await go(page,'Home');
+  await expect(page.locator('.answer .asked')).toHaveText('slow demo');
+  await expect(page.locator('.answer-body')).toContainText('Demo answer');
+});
+
+test('switching back to Home mid-question still shows it is working',async({page})=>{
+  await page.goto('http://127.0.0.1:5173');
+  await page.getByLabel('Your question').fill('slow demo');await page.getByRole('button',{name:'Ask',exact:true}).click();
+  await go(page,'Closet');await go(page,'Home');
+  await expect(page.locator('.thinking')).toBeVisible();
+  await expect(page.locator('.answer-body')).toContainText('Demo answer',{timeout:8000});
+});
+
 test('inventory location can be set and filtered',async({page})=>{
   await page.goto('http://127.0.0.1:5173');
   for(const [desc,spot] of [['Lace cami','Bin 3'],['Levi jeans','Closet shelf']]){

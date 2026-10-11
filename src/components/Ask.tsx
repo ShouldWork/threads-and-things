@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { askStore, startAsk } from "../lib/askStore";
+import { friendlyError } from "../lib/aiErrors";
 import type { Data } from "../types";
 import { today } from "../lib/calc";
 import { shopSummary, scrub } from "../lib/aiSummary";
@@ -34,29 +36,25 @@ export function formatAnswer(text: string): ReactNode[] {
 
 export default function Ask({ data }: { data: Data }) {
   const [q, setQ] = useState("");
-  const [asked, setAsked] = useState("");
-  const [answer, setAnswer] = useState("");
-  const [err, setErr] = useState("");
-  const [busy, setBusy] = useState(false);
-  const asking = useRef(false);
+  // Question, answer and loading state live in askStore so they survive switching tabs.
+  const { asked, answer, err, busy } = useSyncExternalStore(askStore.subscribe, askStore.get);
   const card = useRef<HTMLDivElement>(null);
+  // Scroll to the answer card only for changes that happen while Home is open, not every time she returns to Home.
+  const mounted = useRef(false);
   useEffect(() => {
+    if (!mounted.current) { mounted.current = true; return; }
     if (!(busy || answer || err)) return;
     const still = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
     card.current?.scrollIntoView({ behavior: still ? "auto" : "smooth", block: "start" });
   }, [busy, answer, err]);
   const formatted = useMemo(() => formatAnswer(answer), [answer]);
 
-  async function ask(question: string, label = question) {
+  function ask(question: string, label = question) {
     const text = question.trim();
-    if (!text || asking.current) return;
-    asking.current = true; setBusy(true); setErr(""); setAnswer(""); setAsked(label.trim());
-    try {
-      const ai = await import("../ai");
-      try { setAnswer(await ai.askShop(shopSummary(data, today()), scrub(text))); }
-      catch (e) { setErr(ai.friendlyError(e)); }
-    } catch { setErr("Ask needs an internet connection. Try again when you are back online."); }
-    finally { asking.current = false; setBusy(false); }
+    if (!text) return;
+    const summary = shopSummary(data, today());
+    // A failed module load (offline) surfaces as "Failed to fetch...", which friendlyError reports as offline.
+    void startAsk(label.trim(), async () => (await import("../ai")).askShop(summary, scrub(text)), friendlyError);
   }
 
   return <>

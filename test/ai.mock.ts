@@ -6,7 +6,7 @@ export type ModelChoice = { model: string; thinkingLevel?: string };
 export const DEFAULT_CHOICE: ModelChoice = { model: 'demo' };
 
 export async function askShop(summary: ShopSummary, question: string): Promise<string> {
-  await new Promise(r => setTimeout(r, 400));
+  await new Promise(r => setTimeout(r, /slow demo/i.test(question) ? 2500 : 400));
   if (/fail demo/i.test(question)) throw new Error('Error fetching from https://example/models/demo:generateContent: [500 Internal Server Error] demo');
   const m = summary.thisMonthSoFar, oldest = summary.longestListed;
   return [
