@@ -17,6 +17,17 @@ describe('imports',()=>{
   it('retains stable transaction IDs',()=>{
     const p=parseWorkbook(workbook('Depop Sales',[['Date of sale','Item price','Description','Sale ID'],['2026-10-01',20,'Shirt','tx-123']]));expect(p.sales?.[0].sourceId).toBe('tx-123');
   });
+  it('reads Depop export placeholders: "-" and "N/A" are empty amounts, and "Buyer shipping cost" is shipping',()=>{
+    const p=parseWorkbook(workbook('Depop Sales',[
+      ['Date of sale','Item price','Description','Buyer shipping cost','Boosting fee','Depop Payments fee','US Sales tax','Refunded to buyer amount','Fees refunded to seller'],
+      ['2026-10-01','$5.00','Hoodie','$4.50','-','$0.76','$0.42','N/A','N/A'],
+      ['2026-10-01','$1.80','Bundle extra','-','$0.22','-','-','N/A','n/a'],
+    ]));
+    expect(p.sales?.map(s=>({price:s.price,ship:s.ship,boost:s.boost,payFee:s.payFee,tax:s.tax,refund:s.refund,feeBack:s.feeBack}))).toEqual([
+      {price:5,ship:4.5,boost:0,payFee:0.76,tax:0.42,refund:0,feeBack:0},
+      {price:1.8,ship:0,boost:0.22,payFee:0,tax:0,refund:0,feeBack:0},
+    ]);
+  });
   it('rejects malformed spreadsheet amounts instead of silently turning them into zero',()=>{
     expect(()=>parseWorkbook(workbook('Depop Sales',[['Date of sale','Item price','Description'],['2026-10-01','20oops','Shirt']]))).toThrow('Invalid spreadsheet number');
   });

@@ -57,7 +57,7 @@ service cloud.firestore {
     }
     function valid_listings(r, legacy) {
       return r.keys().hasAll(['cat', 'size', 'desc', 'posted', 'link', 'status', 'price', 'exact', 'boosted'])
-        && r.keys().hasOnly(['cat', 'size', 'desc', 'posted', 'link', 'status', 'price', 'exact', 'boosted', 'orig', 'sourceData', 'manualFields', 'origin', 'productId', 'orderId', 'importAliases'])
+        && r.keys().hasOnly(['cat', 'size', 'desc', 'posted', 'link', 'status', 'price', 'exact', 'boosted', 'orig', 'location', 'soldBy', 'previousStatus', 'sourceData', 'manualFields', 'origin', 'productId', 'orderId', 'importAliases'])
         && text(r.cat)
         && text(r.size)
         && text(r.desc)
@@ -68,6 +68,9 @@ service cloud.firestore {
         && r.exact is bool
         && r.boosted is bool
         && (r.get('orig', null) == null || amount(r.orig))
+        && text(r.get('location', ''))
+        && text(r.get('soldBy', ''))
+        && text(r.get('previousStatus', ''))
         && (r.link == '' || r.link.matches('^https://(www[.])?depop[.]com/products/.*$'))
         && r.desc.size() > 0
         && (legacy || r.posted != '');

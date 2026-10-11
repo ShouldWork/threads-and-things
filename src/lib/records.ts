@@ -16,7 +16,7 @@ const numbers: Record<ColName, string[]> = {
   listings: ['price'], inventory: ['cost'], expenses: ['amount'], mileage: ['miles'], time: ['minutes'], issues: ['lost'],
 };
 const booleans: Partial<Record<ColName, string[]>> = { listings: ['exact','boosted'], expenses: ['receipt'], issues: ['resolved'] };
-const optionalText: Partial<Record<ColName, string[]>> = { sales: ['buyer','sourceId','importKey','importFingerprint'], inventory: ['soldBy','previousStatus','previousOutcome','location'] };
+const optionalText: Partial<Record<ColName, string[]>> = { sales: ['buyer','sourceId','importKey','importFingerprint'], listings: ['location','soldBy','previousStatus'], inventory: ['soldBy','previousStatus','previousOutcome','location'] };
 const dateFields = ['date','listed','posted','acquired','outcome'];
 export function validDate(value: string) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;

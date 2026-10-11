@@ -1,11 +1,13 @@
 import { useMemo, useState } from "react";
 import type { Data, Sale } from "../types";
 import { money, net, days, fmtDate } from "../lib/calc";
-import { Kpi, HBars } from "../components/ui";
+import { Kpi, HBars, I } from "../components/ui";
 
 export default function Sales({ data, onEdit }: { data: Data; onEdit: (s: Sale) => void }) {
   const [limit,setLimit] = useState(100);
   const [q, setQ] = useState(""); const [cat, setCat] = useState("All"); const [sort, setSort] = useState("new");
+  // Where each sold item is stored, from the listing it sold through, so she can find it to ship.
+  const spotFor = useMemo(() => new Map(data.listings.filter(l => l.soldBy && l.location?.trim()).map(l => [l.soldBy!, l.location!.trim()])), [data.listings]);
   const cats = ["All", ...Array.from(new Set(data.sales.map(s => s.cat))).filter(Boolean).sort()];  const list = useMemo(() => {
     let l = data.sales.map(s => ({ ...s, n: net(s), dts: s.listed ? days(s.listed, s.date) : NaN }));
     if (cat !== "All") l = l.filter(s => s.cat === cat);
@@ -32,7 +34,7 @@ export default function Sales({ data, onEdit }: { data: Data; onEdit: (s: Sale) 
       {list.length === 0 && <div className="empty"><b>No sales match</b>Clear the search, or log a sale with the + button.</div>}
       {list.slice(0, limit).map(s => <button type="button" className="rowbtn" key={s.id} onClick={() => onEdit(s)}><div className="row">
         <div className="main"><div className="desc">{s.desc.split("\n")[0] || "(no description)"}</div>
-          <div className="meta"><span>{fmtDate(s.date)}</span><span>{s.cat}</span><span>{s.size}</span>{s.brand && s.brand !== "Other" && <span>{s.brand}</span>}{s.sku && <span>{s.sku}</span>}
+          <div className="meta">{spotFor.get(s.id!) && <span className="pill spot">{I.pin}{spotFor.get(s.id!)}</span>}<span>{fmtDate(s.date)}</span><span>{s.cat}</span><span>{s.size}</span>{s.brand && s.brand !== "Other" && <span>{s.brand}</span>}{s.sku && <span>{s.sku}</span>}
             {isFinite(s.dts) && <span className={"pill " + (s.dts <= 3 ? "good" : s.dts >= 14 ? "warn" : "soft")}>{s.dts}d to sell</span>}{s.boost > 0 && <span className="pill gold">boosted</span>}{s.platform && s.platform !== "Depop" && <span className="pill soft">{s.platform}</span>}</div></div>
         <div className="price">{money(s.price)}<s style={{ textDecoration: "none" }}>net {money(s.n - s.cogs)}</s></div>
       </div></button>)}

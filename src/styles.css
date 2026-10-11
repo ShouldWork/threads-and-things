@@ -190,4 +190,8 @@ a{color:var(--rose);font-weight:700}
 .dots{display:inline-flex;gap:4px}
 .dots i{width:8px;height:8px;border-radius:50%;background:var(--rose);opacity:.35}
 @media (prefers-reduced-motion:no-preference){.dots i{animation:blink 1.2s infinite}.dots i:nth-child(2){animation-delay:.2s;background:var(--lav)}.dots i:nth-child(3){animation-delay:.4s;background:var(--peach)}@keyframes blink{0%,100%{opacity:.25;transform:translateY(0)}50%{opacity:1;transform:translateY(-3px)}}}
+.linknote{display:flex;gap:6px;align-items:baseline;flex-wrap:wrap;margin:0;padding:8px 12px;border-radius:14px;background:var(--lav-soft);color:var(--lav-ink)}
+.linknote svg{width:14px;height:14px;flex:none;align-self:center}
+.retire{display:flex;gap:10px;align-items:flex-start;margin:10px 0;padding:10px 12px;border:1px solid var(--line);border-radius:14px;background:var(--surface-2)}
+.retire input{margin-top:4px;width:18px;height:18px;flex:none}
 .offline{background:var(--warn-soft);color:var(--warn);font-weight:700;font-size:.8rem;padding:6px 12px;border-radius:999px;display:inline-block}

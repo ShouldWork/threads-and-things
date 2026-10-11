@@ -6,7 +6,9 @@ import { money, today } from '../lib/calc';
 import { COLS, prepareRow, type ColName, type Row } from '../lib/records';
 import { previewImport } from '../lib/importPlan';
 import DataTools from '../components/DataTools';
-import { Chips, Field, FileButton } from '../components/ui';
+import { Chips, Field, FileButton, I } from '../components/ui';
+import { recordKey } from '../lib/importRecords';
+import { isActiveListing } from '../lib/listingLinks';
 import { savedTheme, setTheme, type Theme } from '../lib/theme';
 import type { Kind } from '../components/Forms';
 
@@ -14,7 +16,8 @@ type Props = { data: Data; email: string; pending: boolean; history:HistoryEntry
 export default function More({data,email,pending,history,version,revision,role,toast,onEdit}: Props) {
   const [busy,setBusy]=useState(''), [err,setErr]=useState('');
   const [theme,setThemeState]=useState<Theme>(savedTheme);
-  const [proposal,setProposal]=useState<{name:string; changes:ImportChanges;suggestedSettings?:Partial<Settings>}|null>(null);
+  // retireCandidates: active listings (from an earlier listings import) that are missing from this saved page.
+  const [proposal,setProposal]=useState<{name:string; changes:ImportChanges;suggestedSettings?:Partial<Settings>;retireCandidates?:string[]}|null>(null);
   const [name,setName]=useState(data.settings.name), [taxPct,setTaxPct]=useState(data.settings.taxPct*100), [rate,setRate]=useState(data.settings.mileageRate);
   const [recordKind,setRecordKind]=useState<ColName>('expenses');
   const [decisions,setDecisions]=useState<Record<string,string>>({});
@@ -26,11 +29,14 @@ export default function More({data,email,pending,history,version,revision,role,t
       if(file.size > 20*1024*1024) throw new Error('Choose a file smaller than 20 MB.');
       let changes:ImportChanges;
       let suggestedSettings:Partial<Settings>|undefined;
+      let retireCandidates:string[]|undefined;
       if(kind === 'html') {
         const {parseDepopListingsHtml}=await import('../lib/depopHtml');
         const rows=parseDepopListingsHtml(await file.text(),data.settings.shopStart);
         if(!rows.length) throw new Error('No listings found. Save the complete Selling hub Active page after loading all listings.');
         changes={merge:{listings:rows},settings:{snapshot:today()}};
+        const onPage=new Set(rows.map(r=>recordKey('listings',r)));
+        retireCandidates=data.listings.filter(l=>l.id && isActiveListing(l) && !l.soldBy && (l.link || l.productId) && !onPage.has(recordKey('listings',l))).map(l=>l.id!);
       } else {
         const {parseWorkbook}=await import('../lib/parse');
         const parsed=parseWorkbook(await file.arrayBuffer(),data.settings.shopStart);
@@ -50,7 +56,7 @@ export default function More({data,email,pending,history,version,revision,role,t
       for(const [c,rows] of Object.entries(changes.merge || {})) rows!.forEach((row,i)=>{try{prepareRow(c as ColName,row,true);}catch(e){throw new Error(`${c} row ${i+1}: ${(e as Error).message}`);}});
       if(!changes.sales?.length && !Object.keys(changes.merge || {}).length)throw new Error('This file contains no records to import.');
       changes.sales=changes.sales?.map(s=>({...s,id:newRecordId()}));changes.label=file.name;
-      setProposal({name:file.name,changes,suggestedSettings});
+      setProposal({name:file.name,changes,suggestedSettings,retireCandidates});
     } catch(e){setErr((e as Error).message);} finally {setBusy('');}
   }
   async function applyImport(){
@@ -78,12 +84,14 @@ export default function More({data,email,pending,history,version,revision,role,t
     {proposal && <div className="card" role="region" aria-label="Review import"><h3>Review {proposal.name}</h3>
       <p>{merged?.added || 0} new; {merged?.updated || 0} updated; {merged?.unchanged || 0} unchanged; {merged?.skipped || 0} skipped.</p>
       <ul>{Object.entries(merged?.collections || {}).map(([c,counts])=><li key={c}>{c}: {counts!.added} new, {counts!.updated} updated, {counts!.unchanged} unchanged.</li>)}</ul>
+      {!!merged?.listingsToMarkSold && <p className="note linknote">{I.tag} {merged.listingsToMarkSold} {merged.listingsToMarkSold===1?'listing matches a sale in this file and will be':'listings match sales in this file and will be'} marked sold. You'll find them under Closet › Sold, with their bins.</p>}
+      {!!proposal.retireCandidates?.length && <label className="retire"><input type="checkbox" checked={!!proposal.changes.retireListings?.length} onChange={e=>{const on=e.target.checked;setProposal(p=>p?{...p,changes:{...p.changes,retireListings:on?p.retireCandidates:undefined}}:p);}}/> <span><b>{proposal.retireCandidates.length} {proposal.retireCandidates.length===1?'listing is':'listings are'} no longer on this page. Mark {proposal.retireCandidates.length===1?'it':'them'} removed?</b><br/><span className="note">Only if you scrolled to load every listing before saving the page; otherwise some may still be on Depop. Removed listings move to Closet › Removed and can be set back to Active.</span></span></label>}
       {reviewed.error && <p role="alert" className="err">{reviewed.error}</p>}
       {merged?.uncertain.map(match=><div key={match.index}><p><b>Review sales row {match.index+1}: {match.sale.desc}</b><br/>{match.sale.date} · {money(match.sale.price)}<br/>{match.reason}</p><Field label={`Match for sales row ${match.index+1}`}><select value={decisions[match.index] || ''} onChange={e=>setDecisions(d=>({...d,[match.index]:e.target.value}))}><option value="">Choose what to do...</option>{match.candidates.map(s=><option key={s.id} value={s.id}>Update {s.desc} · {s.date} · {money(s.price)} · SKU {s.sku || 'none'}</option>)}<option value="new">Add as a separate sale</option><option value="skip">Skip this row</option></select></Field></div>)}
       {Object.entries(decisions).filter(([,choice])=>choice).map(([index,choice])=><p className="note" key={index}>Reviewed sales row {Number(index)+1}: {choice==='new'?'add a separate sale':choice==='skip'?'skip this row':`update ${data.sales.find(s=>s.id===choice)?.desc || proposal.changes.sales?.find(s=>s.id===choice)?.desc || 'the chosen sale'}`}. <button className="btn small" onClick={()=>setDecisions(d=>{const next={...d};delete next[index];return next;})}>Review again</button></p>)}
       <p className="note">Protected app edits keep their current values. Open a record and choose “Use latest imported values” to release that protection.</p>
       {Object.entries(proposal.suggestedSettings || {}).map(([key,value])=><label key={key} style={{display:'block'}}><input type="checkbox" checked={proposal.changes.settings?.[key as keyof Settings]===value} onChange={e=>{const checked=e.target.checked;setProposal(p=>{if(!p)return p;const settings={...p.changes.settings};if(checked)Object.assign(settings,{[key]:value});else delete settings[key as keyof Settings];return{...p,changes:{...p.changes,settings}};});}}/> Apply tracker {key==='taxPct'?`tax set-aside (${Number(value)*100}%)`:`mileage rate (${money(Number(value))}/mile)`}</label>)}
-      {proposal.changes.sales?.some(s=>!s.sourceId) && <p className="note">Some rows have no transaction ID. Possible matches require your review; identical transactions without IDs cannot be distinguished automatically.</p>}
+      {!!merged?.uncertain.length && proposal.changes.sales?.some(s=>!s.sourceId) && <p className="note">Some rows have no transaction ID. Possible matches require your review; identical transactions without IDs cannot be distinguished automatically.</p>}
       <p className="note">Your current data stays available if saving fails. Imports require an internet connection and all pending changes to finish syncing.</p>
       <div className="actions"><button className="btn primary" disabled={!!busy || pending || !navigator.onLine || !merged || !!merged.uncertain.length} onClick={applyImport}>Import these changes</button><button className="btn" disabled={!!busy} onClick={()=>setProposal(null)}>Cancel import</button></div>
     </div>}

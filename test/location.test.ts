@@ -3,7 +3,7 @@ import { prepareRow } from '../src/lib/records';
 import { mergeRecords,markManual } from '../src/lib/importRecords';
 import { saleWrites } from '../src/lib/saleWrites';
 import { locations } from '../src/components/Forms';
-import { item,sale,emptyData } from './fixtures';
+import { item,sale,listing,emptyData } from './fixtures';
 describe('inventory storage location',()=>{
   it('keeps the location when a record is prepared and leaves it out when absent',()=>{
     expect(prepareRow('inventory',{...item(),location:'Bin 3'}).location).toBe('Bin 3');
@@ -19,6 +19,18 @@ describe('inventory storage location',()=>{
     const placed=markManual('inventory',{...imported,location:'Garage tote'},imported);
     const {rows}=mergeRecords('inventory',[placed],[item({cost:7})]);
     expect(rows[0]).toMatchObject({location:'Garage tote',cost:7});
+  });
+  it('listings keep a location, and suggestions include spots from listings and inventory',()=>{
+    expect(prepareRow('listings',{...listing(),location:'Bin 1'}).location).toBe('Bin 1');
+    const data=emptyData();data.listings=[{...listing({id:'l1'}),location:'Bin 1'}];data.inventory=[{...item({id:'i1'}),location:'Garage tote'}];
+    expect(locations(data)).toEqual(['Bin 1','Garage tote']);
+  });
+  it('re-importing the Depop listings page never wipes a listing location',()=>{
+    const link='https://www.depop.com/products/x-123/';
+    const imported=mergeRecords('listings',[],[listing({link})]).rows[0];
+    const placed=markManual('listings',{...imported,location:'Bin 1'},imported);
+    const {rows}=mergeRecords('listings',[placed],[listing({link,price:18})]);
+    expect(rows[0]).toMatchObject({location:'Bin 1',price:18});
   });
   it('selling an item keeps where it was stored',()=>{
     const data=emptyData();data.inventory=[{...item({id:'i1'}),location:'Bin 3'}];

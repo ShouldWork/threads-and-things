@@ -10,7 +10,7 @@ const Closet = lazy(() => import('./pages/Closet'));
 const Plan = lazy(() => import('./pages/Plan'));
 const Learn = lazy(() => import('./pages/Learn'));
 const More = lazy(() => import('./pages/More'));
-import Form, { KIND_LABEL, type Kind } from "./components/Forms";
+import Form, { KIND_LABEL, type Kind, type NextSheet } from "./components/Forms";
 import { I, Sheet, useToast } from "./components/ui";
 import ErrorBoundary from "./components/ErrorBoundary";
 
@@ -19,7 +19,7 @@ export default function Shop({user}: {user: User}) {
   const { data, ready, error, syncError, pending, fromCache,history,version,revision,role } = useData(user?.email || null);
   const [tab, setTabRaw] = useState(() => { const h = location.hash.slice(1); return TABS.some(t => t[0] === h) ? h : "home"; });
   const setTab = (id: string) => { setTabRaw(id); try { window.history.replaceState(null, "", "#" + id); } catch { /* ignore */ } window.scrollTo(0, 0); };
-  const [sheet, setSheet] = useState<{ kind: Kind; initial?: Record<string, unknown> } | "pick" | null>(null);
+  const [sheet, setSheet] = useState<NextSheet | "pick" | null>(null);
   const { msg, toast } = useToast();
   const [online, setOnline] = useState(navigator.onLine);
   useEffect(() => { const on = () => setOnline(true), off = () => setOnline(false); addEventListener("online", on); addEventListener("offline", off); return () => { removeEventListener("online", on); removeEventListener("offline", off); }; }, []);
@@ -52,7 +52,7 @@ export default function Shop({user}: {user: User}) {
         </div>      </header>
       {syncError && <p className="err" role="alert">{syncError}</p>}
       <main className="fade" key={tab}><ErrorBoundary><Suspense fallback={<p role="status">Opening page...</p>}>
-        {tab === "home" && <Home data={data} go={setTab} openAdd={() => setSheet("pick")} />}
+        {tab === "home" && <Home data={data} go={setTab} openForm={kind => setSheet({ kind })} />}
         {tab === "sales" && <Sales data={data} onEdit={s => openEdit("sale", s)} />}
         {tab === "closet" && <Closet data={data} onEditItem={i => openEdit("item", i)} onEditListing={l => openEdit("listing", l)} />}
         {tab === "plan" && <Plan data={data} toast={toast} />}
@@ -70,8 +70,8 @@ export default function Shop({user}: {user: User}) {
       </div>
       <p className="note" style={{ marginTop: 12 }}>Sale: something sold. Inventory item: something new came in. Time: minutes spent on the shop.</p>
     </Sheet>}
-    {sheet && sheet !== "pick" && <Sheet title={(sheet.initial?.id ? "Edit " : "Add ") + KIND_LABEL[sheet.kind].toLowerCase()} onClose={() => setSheet(null)}>
-      <Form kind={sheet.kind} data={data} initial={sheet.initial} onDone={m => { setSheet(null); toast(m); }} onCancel={() => setSheet(null)} />
+    {sheet && sheet !== "pick" && <Sheet key={(sheet.listingId || "") + sheet.kind + String(sheet.initial?.id || "")} title={(sheet.initial?.id ? "Edit " : "Add ") + KIND_LABEL[sheet.kind].toLowerCase()} onClose={() => setSheet(null)}>
+      <Form key={(sheet.listingId || "") + sheet.kind + String(sheet.initial?.id || "")} kind={sheet.kind} data={data} initial={sheet.initial} listingId={sheet.listingId} onDone={(m, next) => { setSheet(next || null); if (m) toast(m); }} onCancel={() => setSheet(null)} />
     </Sheet>}
     {msg && <div className="toast" role="status">{msg}</div>}
   </>;

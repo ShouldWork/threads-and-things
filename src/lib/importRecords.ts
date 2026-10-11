@@ -1,5 +1,6 @@
 import type { Data, ImportMetadata, Sale } from '../types';
 import { prepareRow, type ColName, type Row } from './records';
+import { reconcileListings } from './listingLinks';
 
 const metadata = new Set(['id','sourceData','manualFields','origin','importKey','importFingerprint','importAliases','sourceId','productId','orderId','soldBy','previousStatus','previousOutcome']);
 export function sourceValues(row: object): Record<string, unknown> {
@@ -67,8 +68,12 @@ export function mergeRecords(c: Exclude<ColName,'sales'>, existing: object[], in
   return {rows,added,updated,unchanged};
 }
 
-// SKU linkage is explicit; descriptions are never used to connect a sale to inventory.
+// Runs after every import, clear and consolidation: inventory links (by SKU), then listing links (see listingLinks.ts).
 export function reconcileInventory(data: Data): Data {
+  return reconcileListings(reconcileInventoryOnly(data)).data;
+}
+// SKU linkage is explicit; descriptions are never used to connect a sale to inventory.
+function reconcileInventoryOnly(data: Data): Data {
   const sales=data.sales.map(s=>{
     const item=s.sku?data.inventory.find(i=>i.sku===s.sku):undefined;
     return item && !s.cogs && !manualFields(s).includes('cogs') && s.sourceData && !('cogs' in sourceValues(s)) ? {...s,cogs:item.cost} : s;
@@ -92,5 +97,7 @@ export function withoutImportedSales(data:Data):Data{
   const removed=new Set(data.sales.filter(importedSale).map(s=>s.id));
   // Clearing financial history does not mean a physically sold item is back on hand.
   const inventory=data.inventory.map(i=>removed.has((i as unknown as Row).soldBy as string)?{...i,soldBy:''}:i);
-  return reconcileInventory({...data,sales:data.sales.filter(s=>!importedSale(s)),inventory});
+  // Same for listings: the item still sold, so it stays Sold; only the link to the cleared sale goes.
+  const listings=data.listings.map(l=>removed.has((l as unknown as Row).soldBy as string)?{...l,soldBy:'',previousStatus:''}:l);
+  return reconcileInventory({...data,sales:data.sales.filter(s=>!importedSale(s)),inventory,listings});
 }

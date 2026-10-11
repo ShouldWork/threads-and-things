@@ -130,10 +130,11 @@ export async function remove(c: ColName,id: string) {
 export async function saveSettings(settings: Partial<Settings>) {
   const s=current(), b=writeBatch(database()); b.set(shopRef(s),prepareSettings(settings),{merge:true}); return commitLocal(s,b);
 }
-export async function saveSale(data: Data,id: string,sale: Sale|null,previous?: Sale) {
-  const s=current(), plan=saleWrites(data,id,sale,previous), b=writeBatch(database());
+export async function saveSale(data: Data,id: string,sale: Sale|null,previous?: Sale,listingId?: string) {
+  const s=current(), plan=saleWrites(data,id,sale,previous,listingId), b=writeBatch(database());
   if(plan.sale) b.set(doc(col(s,'sales'),id),withoutId(plan.sale)); else b.delete(doc(col(s,'sales'),id));
   plan.inventory.forEach(i=>b.set(doc(col(s,'inventory'),i.id!),withoutId(i)));
+  plan.listings.forEach(l=>b.set(doc(col(s,'listings'),l.id!),withoutId(l)));
   return commitLocal(s,b);
 }
 

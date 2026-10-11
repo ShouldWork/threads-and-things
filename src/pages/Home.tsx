@@ -6,7 +6,9 @@ import { Kpi, Chips, Bars, HBars, I } from "../components/ui";
 import { dashboard, datedBy, type Range } from '../lib/dashboard';
 import { invGroup } from "../types";
 import Ask from "../components/Ask";
-export default function Home({ data, go, openAdd }: { data: Data; go: (t: string) => void; openAdd: () => void }) {
+import type { Kind } from "../components/Forms";
+// openForm opens a specific add form directly (no "What happened?" picker in between).
+export default function Home({ data, go, openForm }: { data: Data; go: (t: string) => void; openForm: (kind: Kind) => void }) {
   const [range, setRange] = useState<Range>("all");
   const active = useMemo(() => data.listings.filter(l => /^active$/i.test(l.status)), [data.listings]);
   const asOf = today();
@@ -28,7 +30,7 @@ export default function Home({ data, go, openAdd }: { data: Data; go: (t: string
   if (stale.length) todo.push({ ic: I.refresh, tone: "bad", t: `${stale.length} listings have sat 21+ days`, d: "Open each one, tap Edit, save. That bumps it in search without losing likes.", go: "closet" });
   if (kids >= 10) todo.push({ ic: I.box, tone: "gold", t: `${kids} kids-size listings`, d: "Kids clothes rarely sell on Depop. Bundle by size or move them to Mercari or local.", go: "learn" });
   const best = wd.find(d => d.hi); if (best && best.value) todo.push({ ic: I.heart, t: `${best.label} is your best sales day`, d: "List new items the evening before so they are fresh when buyers browse.", go: "learn" });
-  if (!hours) todo.push({ ic: I.clock, t: "No time logged yet", d: "Tap + and log a few sessions. Profit per hour is the number that matters most.", go: "add" });
+  if (!hours) todo.push({ ic: I.clock, t: "No time logged yet", d: "Log a few sessions. Profit per hour is the number that matters most.", go: "time" });
 
   return <>
     <div className="greeting"><div className="g"><p className="hello-tag">{hello}</p><h1>Hi {data.settings.name} <span className="heart" aria-hidden="true">{I.heart}</span></h1><p className="sub">Here's how your shop is doing.</p></div></div>
@@ -44,11 +46,11 @@ export default function Home({ data, go, openAdd }: { data: Data; go: (t: string
     <h2>To do this week</h2>
     <div className="card" style={{ marginTop: 0 }}>
       {todo.length === 0 && <div className="empty"><b>Nothing urgent</b>Keep listing. Check back after the next sale.</div>}
-      {todo.map((t, i) => <div className="todo" key={i}><span className={"ic " + (t.tone || "")}>{t.ic}</span><div style={{ flex: 1, minWidth: 0 }}><div style={{ fontWeight: 800 }}>{t.t}</div><div className="note">{t.d}</div></div><button type="button" className="btn small" style={{ flex: "none" }} onClick={() => t.go === "add" ? openAdd() : go(t.go)}>Go</button></div>)}
+      {todo.map((t, i) => <div className="todo" key={i}><span className={"ic " + (t.tone || "")}>{t.ic}</span><div style={{ flex: 1, minWidth: 0 }}><div style={{ fontWeight: 800 }}>{t.t}</div><div className="note">{t.d}</div></div><button type="button" className="btn small" style={{ flex: "none" }} onClick={() => t.go === "time" ? openForm("time") : go(t.go)}>Go</button></div>)}
     </div>
 
     <div className="quick">
-      <button type="button" onClick={openAdd}>{I.tag}Log a sale</button>
+      <button type="button" onClick={() => openForm("sale")}>{I.tag}Log a sale</button>
       <button type="button" onClick={() => go("closet")}>{I.hanger}Closet</button>
       <button type="button" onClick={() => go("plan")}>{I.chart}Plan</button>
       <button type="button" onClick={() => go("more")}>{I.more}Import</button>

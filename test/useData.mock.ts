@@ -22,8 +22,9 @@ export const add=async(c:ColName,row:object,id=newRecordId())=>{(store[c] as obj
 export const update=async(c:ColName,id:string,row:object)=>{(store[c] as object[])=store[c].map(r=>r.id===id?{...prepareRow(c,row),id}:r);emit();return saved;};
 export const remove=async(c:ColName,id:string)=>{(store[c] as object[])=store[c].filter(r=>r.id!==id);emit();return saved;};
 export const saveSettings=async(settings:Partial<Settings>)=>{store={...store,settings:{...store.settings,...settings}};emit();return saved;};
-export const saveSale=async(data:Data,id:string,sale:Sale|null,previous?:Sale)=>{
-  const plan=saleWrites(data,id,sale,previous);store.sales=store.sales.filter(s=>s.id!==id);if(sale)store.sales=[...store.sales,{...sale,id}];
+export const saveSale=async(data:Data,id:string,sale:Sale|null,previous?:Sale,listingId?:string)=>{
+  const plan=saleWrites(data,id,sale,previous,listingId);
+  for(const row of plan.listings)store.listings=store.listings.map(l=>l.id===row.id?row as unknown as typeof l:l);store.sales=store.sales.filter(s=>s.id!==id);if(sale)store.sales=[...store.sales,{...sale,id}];
   for(const row of plan.inventory)store.inventory=store.inventory.map(i=>i.id===row.id?row as unknown as typeof i:i);
   emit();return saved;
 };

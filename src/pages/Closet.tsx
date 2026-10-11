@@ -3,62 +3,73 @@ import { invGroup, type Data, type Item, type Listing } from "../types";
 import { money, days, isKids, fmtDate, today } from "../lib/calc";
 import { Chips, I } from "../components/ui";
 import { locations } from "../components/Forms";
+import { isActiveListing, isSoldListing } from "../lib/listingLinks";
 
 const NO_SPOT = "\u0000none";
 
-type View = "listings" | "inventory";
+type View = "listings" | "sold" | "removed" | "inventory";
 export default function Closet({ data, onEditItem, onEditListing }: { data: Data; onEditItem: (i: Item) => void; onEditListing: (l: Listing) => void }) {
   const [view, setView] = useState<View>("listings");
   const [limit,setLimit] = useState(100);
   const [q, setQ] = useState(""); const [cat, setCat] = useState("All"); const [loc, setLoc] = useState(""); const [age, setAge] = useState("all"); const [kids, setKids] = useState("all"); const [sort, setSort] = useState("old"); const [status, setStatus] = useState("open");
-  const active = useMemo(() => data.listings.filter(l => /^active$/i.test(l.status)), [data.listings]);
+  const active = useMemo(() => data.listings.filter(isActiveListing), [data.listings]);
+  // Sold and removed listings stay findable (with their bin) instead of disappearing.
+  const sold = useMemo(() => data.listings.filter(isSoldListing), [data.listings]);
+  const removed = useMemo(() => data.listings.filter(l => !isActiveListing(l) && !isSoldListing(l)), [data.listings]);
+  const isListingView = view !== "inventory";
+  const source = view === "sold" ? sold : view === "removed" ? removed : active;
+  const saleById = useMemo(() => new Map(data.sales.map(s => [s.id, s])), [data.sales]);
   const snapshot = today();
-  const cats = ["All", ...Array.from(new Set((view === "listings" ? active : data.inventory).map(l => l.cat))).filter(Boolean).sort()];
-  const spots = useMemo(() => locations(data), [data]);
-  const hasUnplaced = data.inventory.some(i => !(i.location || "").trim());
+  const cats = ["All", ...Array.from(new Set((isListingView ? source : data.inventory).map(l => l.cat))).filter(Boolean).sort()];
+  // Storage spots used in the current view (On Depop listings or inventory), for the filter chips.
+  const viewRows: { location?: string }[] = isListingView ? source : data.inventory;
+  const spots = useMemo(() => locations({ ...data, listings: isListingView ? source : [], inventory: view === "inventory" ? data.inventory : [] }), [data, source, isListingView, view]);
+  const hasUnplaced = viewRows.some(r => !(r.location || "").trim());
+  const atSpot = (r: { location?: string }) => !loc || (loc === NO_SPOT ? !(r.location || "").trim() : (r.location || "").trim() === loc);
   const listings = useMemo(() => {
-    let l = active.map(x => ({ ...x, age: days(x.posted, snapshot) }));
-    if (cat !== "All") l = l.filter(x => x.cat === cat); if (q) l = l.filter(x => (x.desc + " " + x.size).toLowerCase().includes(q.toLowerCase()));
+    let l = source.map(x => ({ ...x, age: days(x.posted, snapshot) }));
+    if (cat !== "All") l = l.filter(x => x.cat === cat); if (q) l = l.filter(x => (x.desc + " " + x.size + " " + (x.location || "")).toLowerCase().includes(q.toLowerCase()));
+    l = l.filter(atSpot);
     if (age === "21") l = l.filter(x => x.age >= 21); if (age === "new") l = l.filter(x => x.age < 7);
     if (kids === "kids") l = l.filter(x => isKids(x.size)); if (kids === "adult") l = l.filter(x => !isKids(x.size));
     const s: Record<string, (a: typeof l[0], b: typeof l[0]) => number> = { old: (a, b) => b.age - a.age, new: (a, b) => a.age - b.age, hi: (a, b) => b.price - a.price, lo: (a, b) => a.price - b.price };
     return l.sort(s[sort]);
-  }, [active, q, cat, age, kids, sort, snapshot]);
+  }, [source, q, cat, loc, age, kids, sort, snapshot]);
 
   const items = useMemo(() => {
     let l = data.inventory.slice();
     if (status === "open") l = l.filter(i => invGroup(i.status) === "onHand"); if (status === "unlisted") l = l.filter(i => /^unlisted$/i.test(i.status.trim())); if (status === "sold") l = l.filter(i => invGroup(i.status) === "sold"); if (status === "gone") l = l.filter(i => invGroup(i.status) === "gone");
     if (cat !== "All") l = l.filter(x => x.cat === cat); if (q) l = l.filter(x => (x.desc + " " + x.size + " " + x.sku + " " + x.brand + " " + (x.location || "")).toLowerCase().includes(q.toLowerCase()));
-    if (loc) l = l.filter(x => loc === NO_SPOT ? !(x.location || "").trim() : (x.location || "").trim() === loc);
+    l = l.filter(atSpot);
     return l.sort((a, b) => (b.acquired || "").localeCompare(a.acquired || ""));
   }, [data.inventory, status, cat, q, loc]);
 
   return <>
-    <h1>Closet</h1><p className="sub">{view === "listings" ? "Everything on the rack right now. Red tags need a refresh or a new price." : "Every item you have logged, what it cost, and where it ended up."}</p>
-    <div style={{ marginTop: 10 }}><Chips value={view} onChange={v => { setView(v); setCat("All"); setLoc(""); }} label="View" options={[["listings", `On Depop (${active.length})`], ["inventory", `Inventory (${data.inventory.length})`]]} /></div>
+    <h1>Closet</h1><p className="sub">{{ listings: "Everything on the rack right now. Red tags need a refresh or a new price.", sold: "Listings that sold, and where each was stored. Tap one to see or fix it.", removed: "Listings taken down or no longer on Depop. Set one back to Active to return it to the rack.", inventory: "Every item you have logged, what it cost, and where it ended up." }[view]}</p>
+    <div style={{ marginTop: 10 }}><Chips value={view} onChange={v => { setView(v); setCat("All"); setLoc(""); setAge("all"); setKids("all"); }} label="View" options={[["listings", `On Depop (${active.length})`], ["sold", `Sold (${sold.length})`], ["removed", `Removed (${removed.length})`], ["inventory", `Inventory (${data.inventory.length})`]]} /></div>
     <div className="controls">
-      <input id="c-q" type="search" placeholder={view === "listings" ? "Search, e.g. flare, lace, size M" : "Search description, SKU, brand"} value={q} onChange={e => setQ(e.target.value)} aria-label="Search" />
+      <input id="c-q" type="search" placeholder={isListingView ? "Search, e.g. flare, size M, bin 1" : "Search description, SKU, brand, spot"} value={q} onChange={e => setQ(e.target.value)} aria-label="Search" />
       <div className="two">
         <select id="c-cat" value={cat} onChange={e => setCat(e.target.value)} aria-label="Category">{cats.map(c => <option key={c}>{c}</option>)}</select>
-        {view === "listings" ? <select id="c-sort" value={sort} onChange={e => setSort(e.target.value)} aria-label="Sort"><option value="old">Oldest first</option><option value="new">Newest first</option><option value="hi">Price high to low</option><option value="lo">Price low to high</option></select>
+        {isListingView ? <select id="c-sort" value={sort} onChange={e => setSort(e.target.value)} aria-label="Sort"><option value="old">Oldest first</option><option value="new">Newest first</option><option value="hi">Price high to low</option><option value="lo">Price low to high</option></select>
           : <select id="c-status" value={status} onChange={e => setStatus(e.target.value)} aria-label="Status"><option value="open">On hand</option><option value="unlisted">Not listed yet</option><option value="sold">Sold</option><option value="gone">Left unsold</option><option value="all">All</option></select>}
       </div>
       {view === "listings" && <div className="chips">
         {[["all", "Any age"], ["21", "Sitting 21+ days"], ["new", "New this week"]].map(([k, l]) => <button key={k} type="button" className="chip" aria-pressed={age === k} onClick={() => setAge(k)}>{l}</button>)}
         {[["all", "All sizes"], ["adult", "Adult"], ["kids", "Kids"]].map(([k, l]) => <button key={"k" + k} type="button" className="chip" aria-pressed={kids === k} onClick={() => setKids(k)}>{l}</button>)}
       </div>}
-      {view === "inventory" && spots.length > 0 && <div className="chips" role="group" aria-label="Where it's stored">
+      {spots.length > 0 && <div className="chips" role="group" aria-label="Where it's stored">
         {[["", "Anywhere"], ...spots.map(s => [s, s]), ...(hasUnplaced ? [[NO_SPOT, "No spot yet"]] : [])].map(([k, l]) => <button key={"l" + k} type="button" className="chip" aria-pressed={loc === k} onClick={() => setLoc(k)}>{k && k !== NO_SPOT ? <>{I.pin}{l}</> : l}</button>)}
       </div>}
     </div>
 
-    {view === "listings" && <>
-      <p className="note" style={{ margin: "8px 0 0" }}>{listings.length} listings · {money(listings.reduce((a, l) => a + l.price, 0), 0)} asking. “est.” means the date was estimated. Ages count through today; the last imported snapshot is {data.settings.snapshot}.</p>
+    {isListingView && <>
+      <p className="note" style={{ margin: "8px 0 0" }}>{listings.length} listings · {money(listings.reduce((a, l) => a + l.price, 0), 0)} {view === "listings" ? "asking" : "listed at"}. “est.” means the date was estimated. Ages count through today; the last imported snapshot is {data.settings.snapshot}.</p>
       <div className="card">
-        {listings.length === 0 && <div className="empty"><b>Nothing here</b>{active.length ? "Try loosening the filters." : "Import your Depop listings page from the More tab, or add listings with +."}</div>}
+        {listings.length === 0 && <div className="empty"><b>Nothing here</b>{source.length ? "Try loosening the filters." : view === "sold" ? "Listings you mark sold, or that match an imported sale, show up here." : view === "removed" ? "Nothing removed." : "Import your Depop listings page from the More tab, or add listings with +."}</div>}
         {listings.slice(0, limit).map(l => <div className="row" key={l.id}>
           <div className="main"><button type="button" className="rowbtn" onClick={() => onEditListing(l)}><div className="desc">{l.desc.split("\n")[0]}</div></button>
-            <div className="meta"><span>{l.cat}</span><span>{l.size}</span><span className={"pill " + (l.age >= 21 ? "bad" : l.age < 7 ? "good" : "soft")}>{l.age}d{l.exact ? "" : " est."}</span>{isKids(l.size) && <span className="pill gold">Kids</span>}{l.boosted && <span className="pill warn">boosted</span>}{l.link && <a href={l.link} target="_blank" rel="noopener">Open ↗</a>}</div></div>
+            <div className="meta">{l.location?.trim() && <span className="pill spot">{I.pin}{l.location.trim()}</span>}<span>{l.cat}</span><span>{l.size}</span>{view === "listings" ? <span className={"pill " + (l.age >= 21 ? "bad" : l.age < 7 ? "good" : "soft")}>{l.age}d{l.exact ? "" : " est."}</span> : (() => { const sale = l.soldBy ? saleById.get(l.soldBy) : undefined; return <span className={"pill " + (view === "sold" ? "good" : "warn")}>{sale ? `Sold ${fmtDate(sale.date)} · ${money(sale.price)}` : l.status}</span>; })()}{isKids(l.size) && <span className="pill gold">Kids</span>}{l.boosted && <span className="pill warn">boosted</span>}{l.link && <a href={l.link} target="_blank" rel="noopener">Open ↗</a>}</div></div>
           <div className="price">{l.orig && l.orig > l.price ? <s>{money(l.orig)}</s> : null}{money(l.price)}</div>
         </div>)}
         {listings.length > limit && <button type="button" className="btn" onClick={() => setLimit(n => n+100)}>Show more ({listings.length-limit} remaining)</button>}

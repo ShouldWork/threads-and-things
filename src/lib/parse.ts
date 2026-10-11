@@ -10,8 +10,11 @@ export function iso(v: unknown): string {
   const value=String(v).trim();if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return validDate(value)?value:'';
   const t=Date.parse(value);return Number.isFinite(t)?new Date(t).toISOString().slice(0,10):'';
 }
+// Depop's sales export writes "-" for an empty amount (unboosted sales, extra items in a bundle) and "N/A"
+// for refund columns with no refund. Both mean nothing was charged, same as a blank cell.
+const EMPTY_AMOUNT=/^(?:[-–—]+|n\/?a)$/i;
 export function num(v: unknown) {
-  const value=String(v??'').replace(/[$,]/g,'').trim();if(!value)return 0;
+  const value=String(v??'').replace(/[$,]/g,'').trim();if(!value || EMPTY_AMOUNT.test(value))return 0;
   const n=Number(value);if(!Number.isFinite(n))throw new Error(`Invalid spreadsheet number: ${String(v).slice(0,80)}. No data was changed.`);return n;
 }
 const str=(v:unknown)=>v==null || v==='nan' ? '' : String(v).trim();
@@ -26,7 +29,7 @@ function rowsFrom(ws:XLSX.WorkSheet,headers:string[]):Row[]{
   return grid.slice(h+1).filter(r=>r.some(c=>c!=='' && c!=null)).map(r=>{const o:Row=Object.create(null);head.forEach((k,i)=>{if(k&&!['__proto__','constructor','prototype'].includes(k))o[k]=r[i];});return o;});
 }
 const fields:Record<ColName,Record<string,string[]>>={
-  sales:{date:['Date of sale','Sale date','Date sold','date'],listed:['Date listed','Date of listing','listed'],brand:['Brand'],cat:['Category','cat'],size:['Size'],desc:['Description','Item description','desc'],state:['State'],sku:['SKU'],platform:['Platform'],buyer:['Buyer','Buyer username'],price:['Item price','Sale price','price'],ship:['Buyer shipping','Shipping price','ship'],depopFee:['Depop fee','Depop selling fee','depopFee'],payFee:['Payment fee','Depop Payments fee','payFee'],boost:['Boost fee','Boosting fee','boost'],usps:['USPS cost','Label cost','usps'],refund:['Refund','Refunded to buyer amount'],feeBack:['Fees refunded','Fees refunded to seller','feeBack'],cogs:['Item cost (from Inventory)','Item cost (COGS)','cogs'],tax:['Sales tax collected','US Sales tax','tax'],sourceId:['Sale ID','Transaction ID','sourceId'],productId:['Product ID','Item ID','Listing ID','productId'],orderId:['Order ID','orderId']},
+  sales:{date:['Date of sale','Sale date','Date sold','date'],listed:['Date listed','Date of listing','listed'],brand:['Brand'],cat:['Category','cat'],size:['Size'],desc:['Description','Item description','desc'],state:['State'],sku:['SKU'],platform:['Platform'],buyer:['Buyer','Buyer username'],price:['Item price','Sale price','price'],ship:['Buyer shipping','Buyer shipping cost','Shipping price','ship'],depopFee:['Depop fee','Depop selling fee','depopFee'],payFee:['Payment fee','Depop Payments fee','payFee'],boost:['Boost fee','Boosting fee','boost'],usps:['USPS cost','Label cost','usps'],refund:['Refund','Refunded to buyer amount'],feeBack:['Fees refunded','Fees refunded to seller','feeBack'],cogs:['Item cost (from Inventory)','Item cost (COGS)','cogs'],tax:['Sales tax collected','US Sales tax','tax'],sourceId:['Sale ID','Transaction ID','sourceId'],productId:['Product ID','Item ID','Listing ID','productId'],orderId:['Order ID','orderId']},
   inventory:{sku:['SKU'],acquired:['Date acquired','acquired'],source:['Source'],cost:['Cost paid','cost'],cat:['Category','cat'],size:['Size'],brand:['Brand'],desc:['Description','desc'],platform:['Listed on','Platform'],listed:['Date listed','listed'],status:['Status'],outcome:['Outcome date','outcome'],notes:['Notes']},
   listings:{cat:['Category','cat'],size:['Size'],desc:['Description','desc'],orig:['Original price','orig'],price:['Current price','price'],posted:['Posted date (est.)','Date','posted'],exact:['Date confidence'],boosted:['Boosted'],link:['Link'],status:['Status'],productId:['Product ID','Item ID','productId']},
   expenses:{date:['Date'],cat:['Category','cat'],vendor:['Vendor'],desc:['Description','desc'],amount:['Amount'],paidWith:['Paid with','paidWith'],receipt:['Receipt saved?','receipt'],notes:['Notes']},

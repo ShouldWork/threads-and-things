@@ -3,6 +3,8 @@ import { manualFields, mergeRecord, sourceValues } from './importRecords';
 
 const text = (s: unknown) => String(s || '').trim().replace(/\s+/g,' ').toLowerCase();
 const platform = (s: Sale) => text(s.platform) || 'depop';
+// "N/A", "nan" and blanks mean missing. Two values conflict only when both are present and differ.
+const present = (v: unknown) => { const s = text(v); return s && !['n/a', 'na', 'nan', '-'].includes(s) ? s : ''; };
 export function externalSaleKey(s: Sale): string {
   return s.sourceId ? JSON.stringify([platform(s),s.sourceId,s.productId || '']) : '';
 }
@@ -19,17 +21,25 @@ function possibleMatch(a: Sale,b: Sale): boolean {
   if (a.productId && b.productId && a.productId !== b.productId) return false;
   const x = original(a), y = original(b);
   if (x.date !== y.date) return false;
-  if (x.sku && y.sku && text(x.sku) === text(y.sku)) return true;
+  // A placeholder SKU ("N/A") is not an identity: Depop exports it on every row.
+  if (present(x.sku) && present(x.sku) === present(y.sku)) return true;
   if (a.productId && a.productId === b.productId) return true;
   return !!text(x.desc) && text(x.desc) === text(y.desc) && (!x.buyer || !y.buyer || text(x.buyer) === text(y.buyer));
 }
 export type MatchDecisions = Record<string,string>;
 export type UncertainSale = {index:number;sale:Sale;candidates:Sale[];reason:string};
 function aliases(s: Sale): string[] { try { const value=JSON.parse(s.importAliases || '[]');return Array.isArray(value) ? value.filter(v=>typeof v === 'string') : []; } catch { return []; } }
+// Sales saved before import fingerprints existed (no importKey, sourceData or sourceId) can differ from the export in
+// buyer/SKU/size formatting, so their fingerprint never matches exactly. Pair one automatically only when the pairing is
+// one-to-one: exactly one saved candidate, same price, and no other row in this file could also be that sale.
+const legacySale = (s: Sale) => !s.importKey && !s.sourceData && !s.sourceId;
+const conflicts = (a: Sale, b: Sale) => (['sku', 'brand', 'size'] as const).some(k => present(a[k]) && present(b[k]) && present(a[k]) !== present(b[k]));
 export function mergeSales(existing: Sale[], incoming: Sale[], decisions: MatchDecisions = {}) {
   const rows = [...existing]; const uncertain: UncertainSale[] = [];
   let added=0,updated=0,unchanged=0,skipped=0;
   const assigned = new Set<string>();
+  const claims = new Map<string,number>();
+  for (const sale of incoming) for (const s of existing) if (legacySale(s) && possibleMatch(s,sale)) claims.set(s.id!,(claims.get(s.id!) || 0)+1);
   incoming.forEach((sale,index)=>{
     const native = externalSaleKey(sale);
     const exact = rows.filter(s=>native ? externalSaleKey(s) === native || (s.sourceId===sale.sourceId && !(s.productId && sale.productId && s.productId!==sale.productId) && aliases(s).includes(saleKey(sale))) : saleKey(s) === saleKey(sale) || aliases(s).includes(saleKey(sale)) || (s.sourceData && saleKey(original(s)) === saleKey(sale)));
@@ -41,7 +51,10 @@ export function mergeSales(existing: Sale[], incoming: Sale[], decisions: MatchD
       previous = candidates.find(s=>s.id === decision);
       if (!previous) throw new Error('An import match changed. Review this row again.');
     } else if (decision !== 'new') {
+      const legacyPair = !exact.length && candidates.length === 1 && legacySale(candidates[0]) && candidates[0].price === sale.price
+        && !conflicts(candidates[0], sale) && claims.get(candidates[0].id!) === 1 && !assigned.has(candidates[0].id!);
       if (exact.length === 1 && !(assigned.has(exact[0].id!) && (!native || text(original(exact[0]).desc) !== text(sale.desc)))) previous = exact[0];
+      else if (legacyPair) previous = candidates[0];
       else if (candidates.length) {
         uncertain.push({index,sale,candidates,reason:exact.length > 1 ? 'More than one saved sale matches.' : assigned.has(candidates[0].id!) ? 'Another row in this file may be the same sale.' : 'This may be a saved sale with different or missing export details.'});
         return;

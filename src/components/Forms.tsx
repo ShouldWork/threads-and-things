@@ -1,22 +1,27 @@
 import { useRef, useState } from "react";
 import { LISTS, type Data, type Sale, type Item, type Expense, type Trip, type TimeRow, type Issue, type Listing } from "../types";
-import { today, newSku, net, money } from "../lib/calc";
+import { today, newSku, net, money, fmtDate } from "../lib/calc";
 import { add, update, remove, saveSale, newRecordId, type ColName } from "../hooks/useData";
 import { prepareRow } from '../lib/records';
 import { saleKey } from '../lib/imports';
 import { markManual, sourceValues } from '../lib/importRecords';
-import { Field, Select } from "./ui";
+import { Field, Select, I } from "./ui";
 
 export type Kind = "sale" | "item" | "expense" | "time" | "trip" | "issue" | "listing";
 export const KIND_LABEL: Record<Kind, string> = { sale: "Sale", item: "Inventory item", expense: "Expense", time: "Time", trip: "Mileage", issue: "Issue", listing: "Listing" };
 const COL: Record<Kind, ColName> = { sale: "sales", item: "inventory", expense: "expenses", time: "time", trip: "mileage", issue: "issues", listing: "listings" };
 
-// Every storage spot used so far, so the location box can suggest them.
-export const locations = (data: Data) => Array.from(new Set(data.inventory.map(i => (i.location || "").trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+// Every storage spot used so far, on listings and inventory, so the location box can suggest them.
+export const locations = (data: Data) => Array.from(new Set([...data.listings, ...data.inventory].map(r => (r.location || "").trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
 
-type Props ={ kind: Kind; data: Data; initial?: Partial<Sale & Item & Expense & Trip & TimeRow & Issue & Listing> & { id?: string }; onDone: (msg: string) => void; onCancel: () => void };
+// After saving, a form can hand off to another form (marking a listing Sold opens "Log this sale").
+export type NextSheet = { kind: Kind; initial?: Record<string, unknown>; listingId?: string };
+// A new sale prefilled from the listing it came from.
+export const saleFromListing = (l: Partial<Listing>) => ({ date: today(), desc: l.desc || "", cat: l.cat || "Tops", size: l.size || "", price: l.price || 0, listed: l.posted || "", platform: "Depop" });
 
-export default function Form({ kind, data, initial, onDone, onCancel }: Props) {
+type Props ={ kind: Kind; data: Data; initial?: Partial<Sale & Item & Expense & Trip & TimeRow & Issue & Listing> & { id?: string }; listingId?: string; onDone: (msg: string, next?: NextSheet) => void; onCancel: () => void };
+
+export default function Form({ kind, data, initial, listingId, onDone, onCancel }: Props) {
   const editing = !!initial?.id;
   const recordId = useRef(initial?.id || newRecordId());
   const saving = useRef(false);
@@ -31,7 +36,7 @@ export default function Form({ kind, data, initial, onDone, onCancel }: Props) {
     time: { date: today(), activity: "Listing", minutes: 30, notes: "" },
     trip: { date: today(), purpose: "Post office", miles: 0 },
     issue: { date: today(), sku: "", platform: "Depop", type: "Refund issued", lost: 0, resolved: false, what: "", next: "" },
-    listing: { cat: "Tops", size: "M", desc: "", orig: null, price: 0, posted: today(), exact: true, boosted: false, link: "", status: "Active" },
+    listing: { cat: "Tops", size: "M", desc: "", orig: null, price: 0, posted: today(), exact: true, boosted: false, link: "", status: "Active", location: "" },
   };
   // "boosted" on a sale is a form-only switch (the saved field is the boost fee); on a listing it is a real field.
   const [f, setF] = useState<Record<string, unknown>>({ ...defaults[kind], ...(initial || {}), ...(kind === "sale" && initial ? { boosted: Number(initial.boost || 0) > 0 } : {}) });
@@ -44,6 +49,9 @@ export default function Form({ kind, data, initial, onDone, onCancel }: Props) {
   // Sale helper: estimate Depop fees from price + shipping if the user hasn't entered them
   const estimateFees = () => { const price = n("price"); const ship = n("ship"); const tax = n("tax"); const pay = Math.round((0.033 * (price + ship + tax) + 0.45) * 100) / 100; s("payFee", pay); if (f.boosted) s("boost", Math.round(price * 0.12 * 100) / 100); };
   const skuMatch = kind === "sale" && str("sku") ? data.inventory.find(i => i.sku === str("sku")) : undefined;
+  // Listing links: the sale this listing was sold through, and (on a sale form) the listing it is being logged from.
+  const linkedSale = kind === "listing" && initial?.soldBy ? data.sales.find(x => x.id === initial.soldBy) : undefined;
+  const fromListing = kind === "sale" ? (listingId ? data.listings.find(l => l.id === listingId) : data.listings.find(l => l.soldBy && l.soldBy === initial?.id)) : undefined;
 
   async function persist(deleting = false) {
     if (saving.current) return;
@@ -57,19 +65,26 @@ export default function Form({ kind, data, initial, onDone, onCancel }: Props) {
           throw new Error('Edit or delete the linked sale to change this item’s sold status or SKU.');
         }
       }
+      if (kind === 'listing' && linkedSale && (deleting || row.status !== initial?.status)) {
+        throw new Error('This listing is linked to a sale. To put it back on the rack, delete that sale in Sales.');
+      }
       let result;
       if (kind === 'sale') {
         if (skuMatch && !row.cogs && !costTouched && !editing) row.cogs = skuMatch.cost;
         if (initial) row.importKey = saleKey(initial as Sale);
         if (!deleting) row = markManual('sales',row,initial,protectEdits);
-        result = await saveSale(data, recordId.current, deleting ? null : prepareRow('sales',row) as unknown as Sale, editing ? initial as Sale : undefined);
+        result = await saveSale(data, recordId.current, deleting ? null : prepareRow('sales',row) as unknown as Sale, editing ? initial as Sale : undefined, listingId);
       } else if (deleting) result = await remove(COL[kind], recordId.current);
       else {
         if (kind === 'item' && data.inventory.some(i => i.sku === row.sku && i.id !== initial?.id)) throw new Error('This SKU is already in inventory.');
         const clean = markManual(COL[kind],row,initial,protectEdits);
         result = editing ? await update(COL[kind],recordId.current,clean) : await add(COL[kind],clean,recordId.current);
       }
-      onDone(result.queued ? (deleting ? 'Deletion queued; will sync.' : 'Saved on this device; will sync.') : deleting ? 'Deleted.' : 'Saved.');
+      const msg = result.queued ? (deleting ? 'Deletion queued; will sync.' : 'Saved on this device; will sync.') : deleting ? 'Deleted.' : 'Saved.';
+      // Just marked an unlinked listing Sold: offer to log the sale, prefilled and linked to this listing.
+      const justSold = kind === 'listing' && !deleting && !linkedSale && /^sold$/i.test(String(row.status)) && !/^sold$/i.test(String(initial?.status || ''));
+      if (justSold) onDone('Marked sold. Log the sale so it counts in your totals.', { kind: 'sale', initial: saleFromListing(row as Partial<Listing>), listingId: recordId.current });
+      else onDone(msg);
     } catch (e) { setErr(e instanceof Error ? e.message : 'Could not save.'); }
     finally { saving.current=false; setBusy(false); }
   }
@@ -80,6 +95,7 @@ export default function Form({ kind, data, initial, onDone, onCancel }: Props) {
     {kind === "sale" && <>
       <div className="grid2"><Field label="Date sold">{date("date")}</Field><Field label="Platform"><Select value={str("platform")} onChange={v => s("platform", v)} options={LISTS.platforms} /></Field></div>
       <Field label="Description">{text("desc", "Brand, color, style, item, size")}</Field>
+      {fromListing && <p className="note linknote">{I.pin} {listingId && !initial?.id ? "Saving marks this listing sold" : "Sold from listing"}: <b>{fromListing.desc.split("\n")[0].slice(0, 60)}</b>{fromListing.location?.trim() ? ` · stored in ${fromListing.location.trim()}` : ""}</p>}
       <div className="grid2"><Field label="Category"><Select value={str("cat")} onChange={v => s("cat", v)} options={LISTS.categories} /></Field><Field label="Size"><Select value={str("size")} onChange={v => s("size", v)} options={LISTS.sizes} /></Field></div>
       <div className="grid2"><Field label="Brand">{text("brand")}</Field><Field label="SKU (from inventory)">{text("sku", "TT-0001")}</Field></div>
       {skuMatch && <p className="note" style={{ margin: 0 }}>Matched inventory: {skuMatch.desc || skuMatch.brand} (cost {money(skuMatch.cost)}). It will be marked Sold.</p>}
@@ -134,6 +150,11 @@ export default function Form({ kind, data, initial, onDone, onCancel }: Props) {
     </>}
     {kind === "listing" && <>
       <Field label="Description">{text("desc")}</Field>
+      {/* First field after the description: this is what she needs when the item sells and has to be found. */}
+      <Field label="Where it's stored"><input type="text" list="tt-locations" autoComplete="off" value={str("location")} onChange={e => s("location", e.target.value)} placeholder="Bin 1, closet shelf, garage tote..." /></Field>
+      <datalist id="tt-locations">{locations(data).map(l => <option key={l} value={l} />)}</datalist>
+      {linkedSale && <p className="note linknote">Sold {fmtDate(linkedSale.date)} for {money(linkedSale.price)}. To put it back on the rack, delete that sale in Sales.</p>}
+      {editing && !linkedSale && /^active$/i.test(str("status")) && <button type="button" className="btn small" onClick={() => onDone("", { kind: "sale", initial: saleFromListing({ ...(initial as Partial<Listing>), ...(f as Partial<Listing>) }), listingId: recordId.current })}>{I.tag} Sold it? Log this sale</button>}
       <div className="grid2"><Field label="Category"><Select value={str("cat")} onChange={v => s("cat", v)} options={LISTS.categories} /></Field><Field label="Size"><Select value={str("size")} onChange={v => s("size", v)} options={LISTS.sizes} /></Field></div>
       <div className="grid2"><Field label="Current price">{num("price")}</Field><Field label="Original price (if marked down)"><input type="number" min={0} step="0.01" value={f.orig == null ? "" : String(f.orig)} onChange={e => s("orig", e.target.value === "" ? null : parseFloat(e.target.value))} /></Field></div>
       <div className="grid2"><Field label="Posted date">{date("posted")}</Field><Field label="Status"><Select value={str("status")} onChange={v => s("status", v)} options={["Active", "Sold", "Removed", "Relisted"]} /></Field></div>

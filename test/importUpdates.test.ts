@@ -19,16 +19,15 @@ describe('sales import updates',()=>{
     const result=mergeSales([edited],[sale({sourceId:'tx-1',price:30,payFee:2})]);
     expect(result.rows[0]).toMatchObject({price:22,desc:'My correction',payFee:2});expect(JSON.parse(result.rows[0].sourceData!).price).toBe(30);
   });
-  it('reviews legacy enrichment differences once, then remembers the confirmed CSV match',()=>{
+  it('pairs a one-to-one legacy match automatically when the CSV only omits details, keeping them',()=>{
     const existing=sale({id:'saved',sku:'TT-1',brand:'Acme',listed:'2026-09-01'}),csv=sale();
-    expect(mergeSales([existing],[csv]).uncertain).toHaveLength(1);
-    const confirmed=mergeSales([existing],[csv],{'0':'saved'});expect(confirmed.rows).toHaveLength(1);expect(confirmed.rows[0].sku).toBe('TT-1');
+    const confirmed=mergeSales([existing],[csv]);expect(confirmed.uncertain).toEqual([]);expect(confirmed.added).toBe(0);
+    expect(confirmed.rows).toHaveLength(1);expect(confirmed.rows[0]).toMatchObject({id:'saved',sku:'TT-1',brand:'Acme'});
     const repeated=mergeSales(confirmed.rows,[csv]);expect(repeated.uncertain).toEqual([]);expect(repeated.added).toBe(0);
   });
   it('learns a newly supplied native ID without changing the saved record ID',()=>{
     const old=sale({id:'legacy'}),csv=sale({sourceId:'new-native-id'});
-    expect(mergeSales([old],[csv]).uncertain).toHaveLength(1);
-    const matched=mergeSales([old],[csv],{'0':'legacy'});
+    const matched=mergeSales([old],[csv]);expect(matched.uncertain).toEqual([]);
     expect(matched.rows[0]).toMatchObject({id:'legacy',sourceId:'new-native-id'});expect(mergeSales(matched.rows,[{...csv,refund:4}]).updated).toBe(1);
   });
   it('requires review for existing duplicates and for identical rows without IDs',()=>{
@@ -90,7 +89,21 @@ describe('inventory, source masks and backups',()=>{
     const cleared=withoutImportedSales(reconcileInventory(data));expect(cleared.sales).toEqual([]);expect(cleared.inventory[0]).toMatchObject({status:'Sold',outcome:'2026-10-01',soldBy:''});
   });
   it('blocks unresolved matches before an import can publish',()=>{
-    const data=emptyData();data.sales=[sale({id:'old',sku:'TT-1'})];expect(()=>finalizedImport(data,{sales:[sale()]})).toThrow('uncertain');
+    const data=emptyData();data.sales=[sale({id:'old',sku:'TT-1'})];expect(()=>finalizedImport(data,{sales:[sale({sku:'TT-2'})]})).toThrow('uncertain');
+  });
+  it('a placeholder SKU (N/A on every row) does not make same-day sales look like each other',()=>{
+    const saved=[sale({id:'a',desc:'Pink hoodie',sku:'N/A',price:5}),sale({id:'b',desc:'Kids mittens',sku:'N/A',price:2})];
+    const csv=[sale({desc:'Pink hoodie',sku:'N/A',price:5,ship:4.5}),sale({desc:'Kids mittens',sku:'N/A',price:2,ship:3})];
+    const r=mergeSales(saved,csv);
+    expect(r.uncertain).toEqual([]);expect(r.added).toBe(0);expect(r.rows.map(s=>[s.id,s.ship])).toEqual([['a',4.5],['b',3]]);
+    const again=mergeSales(r.rows,csv);expect(again).toMatchObject({added:0,updated:0,unchanged:2});
+  });
+  it('still asks when a legacy sale and the CSV row disagree, differ in price, or could be one of two rows',()=>{
+    const saved=sale({id:'old',sku:'TT-1'});
+    expect(mergeSales([saved],[sale({sku:'TT-2'})]).uncertain).toHaveLength(1);
+    expect(mergeSales([saved],[sale({price:99})]).uncertain).toHaveLength(1);
+    expect(mergeSales([saved],[sale(),sale()]).uncertain.length).toBeGreaterThan(0);
+    expect(mergeSales([saved],[sale({sku:'N/A'})]).uncertain).toEqual([]);
   });
   it('round-trips IDs, notes and protected fields in a full backup and rejects duplicate IDs',()=>{
     const data=emptyData();data.inventory=[markManual('inventory',item({id:'i1',notes:'My note'})) as unknown as typeof data.inventory[0]];

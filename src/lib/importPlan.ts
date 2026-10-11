@@ -2,6 +2,7 @@ import { DEFAULT_SETTINGS, type Data, type Sale, type Settings } from '../types'
 import { COLS, prepareRow, prepareSettings, type ColName, type Row } from './records';
 import { mergeSales, type MatchDecisions } from './imports';
 import { mergeRecords, reconcileInventory, sourceValues, manualFields } from './importRecords';
+import { isActiveListing, reconcileListings } from './listingLinks';
 
 export type ImportChanges = {
   sales?: Sale[];
@@ -11,6 +12,8 @@ export type ImportChanges = {
   settings?: Partial<Settings>;
   decisions?: MatchDecisions;
   label?: string;
+  /** Listing IDs she chose to mark Removed because they are no longer on her Depop listings page. */
+  retireListings?: string[];
 };
 export function previewImport(data: Data, changes: ImportChanges) {
   const sales=mergeSales(data.sales,changes.sales || [],changes.decisions);
@@ -22,9 +25,13 @@ export function previewImport(data: Data, changes: ImportChanges) {
     (next[key] as unknown as Row[])=result.rows;collections[key]=result;
   }
   for(const [c,incoming] of Object.entries(changes.replace || {})) (next[c as ColName] as unknown as Row[])=incoming!.map(r=>({...prepareRow(c as ColName,r),id:crypto.randomUUID()}));
+  const retire=new Set(changes.retireListings || []);
+  if(retire.size) next={...next,listings:next.listings.map(l=>l.id && retire.has(l.id) && isActiveListing(l) ? {...l,status:'Removed',previousStatus:l.status} : l)};
   for(const c of COLS)next[c].forEach(r=>prepareRow(c,r,true));
   const counts=Object.values(collections).reduce((n,r)=>({added:n.added+r.added,updated:n.updated+r.updated,unchanged:n.unchanged+r.unchanged}),{added:0,updated:0,unchanged:0});
-  return {next,collections,...counts,skipped:sales.skipped,uncertain:sales.uncertain};
+  // Shown in the review: how many active listings this import will mark Sold (unambiguous description matches).
+  const listingsToMarkSold=reconcileListings(next).marked;
+  return {next,collections,...counts,skipped:sales.skipped,uncertain:sales.uncertain,listingsToMarkSold,listingsRetired:retire.size};
 }
 export function finalizedImport(data: Data, changes: ImportChanges){
   const plan=previewImport(data,changes);

@@ -36,6 +36,8 @@ describe('Firestore authorization and validation',()=>{
   it('validates every collection and rejects unknown collections',async()=>{
     await assertSucceeds(write(item(),'inventory'));await assertSucceeds(write(listing(),'listings'));
     await assertSucceeds(write({...item(),location:'Bin 3'},'inventory'));await assertFails(write({...item(),location:3},'inventory'));
+    await assertSucceeds(write({...listing(),location:'Bin 1'},'listings'));await assertFails(write({...listing(),location:1},'listings'));
+    await assertSucceeds(write({...listing(),status:'Sold',soldBy:'s1',previousStatus:'Active'},'listings'));await assertFails(write({...listing(),soldBy:5},'listings'));
     await assertFails(write({...listing(),link:'javascript:alert(1)'},'listings'));await assertFails(write({date:'2026-10-01',purpose:'trip',miles:-2},'mileage'));await assertFails(write(sale(),'unknown'));
   });
   it('requires a revision increment for normal writes and denies deleting the shop',async()=>{
